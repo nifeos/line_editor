@@ -1,0 +1,29 @@
+[package]
+name = "fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+line_editor = { path = ".." }
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "line_editor_feed"
+path = "fuzz_targets/line_editor_feed.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "line_editor_handoff"
+path = "fuzz_targets/line_editor_handoff.rs"
+test = false
+doc = false
+bench = false
