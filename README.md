@@ -1,9 +1,9 @@
 # line_editor
 
-[![check](https://github.com/nifeos/line_editor/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/nifeos/line_editor/actions/workflows/ci.yml?query=branch%3Amain)
-[![proofs](https://github.com/nifeos/line_editor/actions/workflows/proofs.yml/badge.svg?branch=main)](https://github.com/nifeos/line_editor/actions/workflows/proofs.yml?query=branch%3Amain)
-[![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](https://github.com/nifeos/line_editor#license)
-[![minimum Rust version](https://img.shields.io/badge/rust-1.88%2B-blue.svg)](https://github.com/nifeos/line_editor/blob/main/Cargo.toml)
+[![check](https://github.com/partsfoundry/line_editor/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/partsfoundry/line_editor/actions/workflows/ci.yml?query=branch%3Amain)
+[![proofs](https://github.com/partsfoundry/line_editor/actions/workflows/proofs.yml/badge.svg?branch=main)](https://github.com/partsfoundry/line_editor/actions/workflows/proofs.yml?query=branch%3Amain)
+[![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](https://github.com/partsfoundry/line_editor#license)
+[![minimum Rust version](https://img.shields.io/badge/rust-1.88%2B-blue.svg)](https://github.com/partsfoundry/line_editor/blob/main/Cargo.toml)
 
 An allocation-free line editor for a serial terminal that does no input or output of its own. Bytes
 go in one at a time, and echo comes out through a `Sink`.
