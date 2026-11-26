@@ -6,6 +6,7 @@ rust-version = "1.88"
 description = "An allocation-free line editor for a serial terminal that does no input or output of its own"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/partsfoundry/line_editor"
+documentation = "https://docs.rs/line_editor"
 readme = "README.md"
 keywords = ["no-std", "line-editor", "terminal", "readline", "kani"]
 categories = ["no-std", "command-line-interface", "text-editors"]
