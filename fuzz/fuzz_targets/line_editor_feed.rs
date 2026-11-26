@@ -76,7 +76,7 @@ fuzz_target!(|data: &[u8]| {
                 0xf3 => editor.abandon(),
                 _ => editor.insert_text(argument, &mut out),
             }
-        } else if editor.feed(byte, &mut out) == Event::Line {
+        } else if editor.feed(byte, &mut out) == Some(Event::Line) {
             assert!(
                 editor.line().len() <= MAXIMUM_LINE_BYTES,
                 "a line past its limit"

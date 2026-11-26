@@ -63,7 +63,7 @@
 //! for byte in b"hello" {
 //!     editor.feed(*byte, &mut out);
 //! }
-//! assert_eq!(editor.feed(b'\r', &mut out), Event::Line);
+//! assert_eq!(editor.feed(b'\r', &mut out), Some(Event::Line));
 //! assert_eq!(editor.line(), b"hello");
 //! ```
 

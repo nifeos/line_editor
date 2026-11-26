@@ -95,9 +95,5 @@ impl Sink for Screen {
 }
 
 pub(super) fn feed_all(d: &mut LineEditor, s: &mut Screen, bytes: &[u8]) -> Vec<Event> {
-    bytes
-        .iter()
-        .map(|&b| d.feed(b, s))
-        .filter(|e| *e != Event::None)
-        .collect()
+    bytes.iter().filter_map(|&b| d.feed(b, s)).collect()
 }

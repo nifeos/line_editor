@@ -21,7 +21,11 @@ const BS: u8 = 0x08;
 const BEL: u8 = 0x07;
 const ESC: u8 = 0x1b;
 
-/// What one input byte amounted to.
+/// What one input byte amounted to, when it amounted to something the caller acts on.
+/// [`LineEditor::feed`] returns `None` for every other byte, whose echo, if any, has already gone
+/// to the sink.
+///
+/// More events may follow in a minor release, so a `match` on one ends in a wildcard arm.
 ///
 /// # Examples
 ///
@@ -38,14 +42,14 @@ const ESC: u8 = 0x1b;
 /// ld.start_line(b"$ ", &mut out);
 ///
 /// // ^D on an empty line: end of input.
-/// assert_eq!(ld.feed(0x04, &mut out), Event::Eof);
+/// assert_eq!(ld.feed(0x04, &mut out), Some(Event::Eof));
 ///
 /// // ^C discards whatever was in progress.
 /// ld.start_line(b"$ ", &mut out);
 /// for b in b"rm -rf" {
 ///     ld.feed(*b, &mut out);
 /// }
-/// assert_eq!(ld.feed(0x03, &mut out), Event::Interrupt);
+/// assert_eq!(ld.feed(0x03, &mut out), Some(Event::Interrupt));
 ///
 /// // On a non-empty line, ^D deletes at the cursor instead. ^A goes to the start first.
 /// ld.start_line(b"$ ", &mut out);
@@ -53,14 +57,13 @@ const ESC: u8 = 0x1b;
 ///     ld.feed(*b, &mut out);
 /// }
 /// ld.feed(0x01, &mut out); // ^A: home
-/// assert_eq!(ld.feed(0x04, &mut out), Event::None); // deletes the 'x', does NOT end input
-/// assert_eq!(ld.feed(b'\r', &mut out), Event::Line);
+/// assert_eq!(ld.feed(0x04, &mut out), None); // deletes the 'x', does NOT end input
+/// assert_eq!(ld.feed(b'\r', &mut out), Some(Event::Line));
 /// assert_eq!(ld.line(), b"ls");
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Event {
-    /// Nothing the caller needs to act on (echo may still have been emitted).
-    None,
     /// A line is complete; read it with [`LineEditor::line`] before feeding the next byte.
     Line,
     /// ^D on an empty line: end of input.
@@ -117,13 +120,13 @@ enum EscapeState {
 /// // Type "13", then fix it: ^B moves the cursor left one, onto the 3, and typing 2 **inserts**
 /// // before it rather than overwriting it.
 /// for b in b"13" {
-///     assert_eq!(ld.feed(*b, &mut out), Event::None);
+///     assert_eq!(ld.feed(*b, &mut out), None);
 /// }
 /// ld.feed(0x02, &mut out); // ^B
 /// ld.feed(b'2', &mut out);
 ///
 /// // Carriage return ends the line. The caller reads it before feeding the next byte.
-/// assert_eq!(ld.feed(b'\r', &mut out), Event::Line);
+/// assert_eq!(ld.feed(b'\r', &mut out), Some(Event::Line));
 /// assert_eq!(ld.line(), b"123");
 ///
 /// // The prompt was echoed, and so was everything typed.
@@ -245,7 +248,8 @@ impl LineEditor {
         self.repaint(out);
     }
 
-    /// Feed one wire byte; echo goes to `out`. See [`Event`] for what came of it.
+    /// Feed one input byte; echo goes to `out`. Returns the [`Event`] the byte amounted to, or
+    /// `None` when there is nothing for the caller to act on.
     ///
     /// # Examples
     ///
@@ -262,106 +266,107 @@ impl LineEditor {
     /// ld.start_line(b"", &mut out);
     ///
     /// ld.feed(b'a', &mut out);
-    /// assert_eq!(ld.feed(b'\r', &mut out), Event::Line);
+    /// assert_eq!(ld.feed(b'\r', &mut out), Some(Event::Line));
     /// assert_eq!(ld.line(), b"a");
     ///
     /// // The LF of the CRLF pair is not a second, empty line.
-    /// assert_eq!(ld.feed(b'\n', &mut out), Event::None);
+    /// assert_eq!(ld.feed(b'\n', &mut out), None);
     /// ```
-    pub fn feed(&mut self, b: u8, out: &mut impl Sink) -> Event {
+    pub fn feed(&mut self, b: u8, out: &mut impl Sink) -> Option<Event> {
         // A bare LF right after a CR is the second half of a CRLF, not a second Enter.
         let was_cr = core::mem::replace(&mut self.last_was_cr, false);
         if b == b'\n' && was_cr {
-            return Event::None;
+            return None;
         }
 
         let state = core::mem::replace(&mut self.escape, EscapeState::Idle);
-        if let Some(event) = self.continue_escape(state, b, out) {
-            return event;
+        if self.continue_escape(state, b, out) {
+            return None;
         }
 
         match b {
             ESC => {
                 self.escape = EscapeState::Esc;
-                Event::None
+                None
             }
             b'\r' | b'\n' => {
                 self.last_was_cr = b == b'\r';
-                self.finish_line(out)
+                Some(self.finish_line(out))
             }
             0x03 => {
                 // ^C: discard the line in progress. The caller routes the interrupt (or, today,
                 // merely fails a pending read).
                 out.put(b"^C\r\n");
                 self.abandon();
-                Event::Interrupt
+                Some(Event::Interrupt)
             }
             0x1a => {
                 // ^Z: the same discard as ^C, and the caller decides what a suspend means.
                 out.put(b"^Z\r\n");
                 self.abandon();
-                Event::Suspend
+                Some(Event::Suspend)
             }
-            b'\t' => Event::Tab,
+            b'\t' => Some(Event::Tab),
             0x04 => self.eof_or_delete(out),
             0x01 => {
                 self.home(out);
-                Event::None
+                None
             }
             0x05 => {
                 self.end(out);
-                Event::None
+                None
             }
             0x02 => {
                 self.left(out);
-                Event::None
+                None
             }
             0x06 => {
                 self.right(out);
-                Event::None
+                None
             }
             0x0b => {
                 // ^K: kill to end of line.
                 self.kill_to_end(out);
-                Event::None
+                None
             }
             0x15 => {
                 // ^U: kill to start of line.
                 self.kill_to_start(out);
-                Event::None
+                None
             }
             0x17 => {
                 // ^W: kill the word before the cursor (blanks, then non-blanks, like bash).
                 self.kill_word_before(out);
-                Event::None
+                None
             }
             0x19 => {
                 self.yank(out);
-                Event::None
+                None
             }
             0x0c => {
                 // ^L: clear the screen, repaint prompt and line. The one operation that needs the
                 // prompt, which is why `READLINE` carries it.
                 self.clear_and_repaint(out);
-                Event::None
+                None
             }
             BS | 0x7f => {
                 self.backspace(out);
-                Event::None
+                None
             }
             0x20..=0x7e => {
                 self.insert(b, out);
-                Event::None
+                None
             }
-            _ => Event::None, // other control bytes: ignored, deliberately unecho'd
+            _ => None, // other control bytes: ignored, deliberately unecho'd
         }
     }
 
     /// The byte after an escape introducer, or inside a CSI sequence, in escape state `state`.
-    /// `None` when no escape was in progress and the byte is an ordinary key.
-    fn continue_escape(&mut self, state: EscapeState, b: u8, out: &mut impl Sink) -> Option<Event> {
+    /// False when no escape was in progress and the byte is an ordinary key. No escape sequence
+    /// amounts to an event, so a byte it consumes is only ever echo.
+    fn continue_escape(&mut self, state: EscapeState, b: u8, out: &mut impl Sink) -> bool {
         match state {
-            EscapeState::Idle => None,
+            EscapeState::Idle => false,
             EscapeState::Esc => {
                 match b {
                     b'[' => {
@@ -375,7 +380,7 @@ impl LineEditor {
                     ESC => self.escape = EscapeState::Esc,
                     _ => {} // an escape we do not speak; drop it and the introducer
                 }
-                Some(Event::None)
+                true
             }
             EscapeState::Csi {
                 mut parameters,
@@ -400,30 +405,33 @@ impl LineEditor {
                     }
                     // A final byte: dispatch. Unknown finals are dropped whole, which is what
                     // makes unrecognized keys (F-keys, mouse noise) harmless.
-                    0x40..=0x7e => return Some(self.csi_final(b, parameters[0], out)),
+                    0x40..=0x7e => self.csi_final(b, parameters[0], out),
                     _ => {} // malformed; abandon
                 }
-                Some(Event::None)
+                true
             }
-            EscapeState::Ss3 => Some(self.csi_final(b, 0, out)),
+            EscapeState::Ss3 => {
+                self.csi_final(b, 0, out);
+                true
+            }
             EscapeState::Mouse { remaining } => {
                 if remaining > 1 {
                     self.escape = EscapeState::Mouse {
                         remaining: remaining - 1,
                     };
                 }
-                Some(Event::None)
+                true
             }
         }
     }
 
     /// ^D: end of input on an empty line, otherwise delete the byte under the cursor.
-    fn eof_or_delete(&mut self, out: &mut impl Sink) -> Event {
+    fn eof_or_delete(&mut self, out: &mut impl Sink) -> Option<Event> {
         if self.length_bytes == 0 {
-            Event::Eof
+            Some(Event::Eof)
         } else {
             self.delete_at(out);
-            Event::None
+            None
         }
     }
 
@@ -464,7 +472,7 @@ impl LineEditor {
     }
 
     /// A CSI (or SS3) final byte, with its first numeric parameter.
-    fn csi_final(&mut self, b: u8, p: u16, out: &mut impl Sink) -> Event {
+    fn csi_final(&mut self, b: u8, p: u16, out: &mut impl Sink) {
         match (b, p) {
             (b'D', _) => self.left(out),
             (b'C', _) => self.right(out),
@@ -475,7 +483,6 @@ impl LineEditor {
             (b'~', 3) => self.delete_at(out),
             _ => {} // unknown key; ignore
         }
-        Event::None
     }
 
     fn finish_line(&mut self, out: &mut impl Sink) -> Event {
