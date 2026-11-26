@@ -275,6 +275,9 @@ impl LineEditor {
     ///   characters.
     ///
     /// On any of them nothing is returned, so no half-restored editor reaches the caller.
+    ///
+    /// The editor comes back by value, 3,328 bytes on a 64-bit target, so it passes through the
+    /// caller's stack; a caller with a small stack restores into a `static` rather than a local.
     pub fn restore(reader: &mut Reader<'_>) -> Result<LineEditor, Refusal> {
         let mut editor = LineEditor::new();
         editor.length_bytes = reader.field(&mut editor.buffer)?;
