@@ -1,7 +1,7 @@
 //! Fuzz the line editor's handoff reader with arbitrary bytes.
 //!
-//! A replacement `line_editor` reads the blob its predecessor left in a granted frame. The frame
-//! is not trusted: a blob can be cut short, carry a length past its buffer or a cursor past its
+//! A replacement `line_editor` reads the blob its predecessor left in a buffer it does not
+//! trust: a blob can be cut short, carry a length past its buffer or a cursor past its
 //! line. `LineEditor::restore` and `RawQueue::restore` must refuse such a blob or absorb it into a
 //! consistent state.
 //!
@@ -22,8 +22,7 @@ fuzz_target!(|data: &[u8]| {
     let Ok(mut reader) = Reader::new(data) else {
         return;
     };
-    let mut editor = LineEditor::new();
-    if editor.restore(&mut reader).is_some() {
+    if let Ok(editor) = LineEditor::restore(&mut reader) {
         let (line, cursor) = editor.pending();
         assert!(cursor <= line.len(), "the restored cursor left the line");
 
@@ -32,11 +31,8 @@ fuzz_target!(|data: &[u8]| {
         editor.save(&mut writer);
         let length = writer.finish().expect("a restored editor fits one page");
 
-        let mut again = LineEditor::new();
         let mut reader = Reader::new(&page[..length]).expect("a blob this build wrote reads");
-        again
-            .restore(&mut reader)
-            .expect("a blob this build wrote restores");
+        let again = LineEditor::restore(&mut reader).expect("a blob this build wrote restores");
         assert_eq!(
             editor.pending(),
             again.pending(),
@@ -47,8 +43,7 @@ fuzz_target!(|data: &[u8]| {
     let Ok(mut reader) = Reader::new(data) else {
         return;
     };
-    let mut queue = RawQueue::new();
-    if queue.restore(&mut reader).is_some() {
+    if let Ok(mut queue) = RawQueue::restore(&mut reader) {
         let mut drained = 0;
         let mut buffer = [0u8; 8];
         loop {

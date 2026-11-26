@@ -99,22 +99,16 @@ pub use raw_queue::{MAXIMUM_RAW_QUEUE_BYTES, RawQueue};
 /// It carries what a replacement `line_editor` needs to carry on: the half-typed line and its
 /// cursor, the kill buffer, the history ring and the prompt. It leaves out state that lasts one
 /// keystroke: a half-received escape sequence, history browsing (the browsed line is the edit
-/// line, which is carried) and the last completed line (already delivered or queued). The layout
-/// is this crate's, versioned by [`handoff::LAYOUT`]; a supervisor never reads it.
+/// line, which is carried) and the last completed line (already delivered or queued). A
+/// [`RawQueue`] carries its unread bytes.
 ///
-/// # Layout
+/// [`handoff::Writer`] writes a blob into the caller's buffer and [`handoff::Reader`] reads one
+/// back; [`LineEditor::save`] and [`LineEditor::restore`], and the same pair on [`RawQueue`],
+/// fill and empty it. The encoding is this crate's own and versioned: a build refuses a blob
+/// written in another layout and reports which one it met ([`handoff::Refusal`]).
 ///
-/// Every word is a little-endian `u32`, and a field is a length word followed by that many bytes.
-/// The blob is, in order: [`handoff::MAGIC`], [`handoff::LAYOUT`], the line (a field), the cursor
-/// (a word), the kill buffer (a field), the prompt (a field), the number of history entries held
-/// and the next history slot (two words), then the eight history slots in slot order, each a field.
-/// A [`RawQueue`] saves as one field of its unread bytes, oldest first. Any change to this order,
-/// to a field's meaning or to a width bumps [`handoff::LAYOUT`]; a reader refuses every layout but
-/// its own and reports which one it met.
-///
-/// With every buffer full the editor's part is 2688 bytes and a raw queue's part is 68, so both
-/// fit one 4 KiB page. A refused blob ([`handoff::Refusal`]) may leave the editor half written,
-/// so the caller discards it.
+/// With every buffer full the editor's part is 2688 bytes, header included, and a raw queue's part
+/// is 68 more, so both fit one 4 KiB page.
 pub mod handoff;
 
 #[cfg(test)]

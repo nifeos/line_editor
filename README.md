@@ -73,8 +73,10 @@ range. The rest is host tests.
 
 ## Handoff
 
-`LineEditor::save` and `restore` write and read the editor's state as a blob. The `handoff` module
-documents the layout and a test pins it. A change to the layout bumps `handoff::LAYOUT`.
+`LineEditor::save` and `LineEditor::restore` write and read the editor's state as a blob, through a
+`handoff::Writer` or `handoff::Reader` over the caller's buffer, and `RawQueue` has the same pair.
+The encoding is the crate's own and versioned: a test pins it byte for byte, and a build refuses a
+blob in any layout but its own.
 
 ## Build, test and prove
 
