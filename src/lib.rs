@@ -1,9 +1,8 @@
 //! The line discipline engine: an editor for a serial terminal that does no input or output of its
 //! own.
 //!
-//! [`LineEditor`] takes one byte at a time and emits echo bytes and completed lines; it does no
-//! input or output (IO), inter-process communication (IPC), universal asynchronous
-//! receiver-transmitter (UART) or endpoint work, so the program that runs it only wires it
+//! [`LineEditor`] takes one byte at a time and emits echo bytes and completed lines; it reads no
+//! device and writes none, and it sends no message, so the program that runs it only wires it
 //! up. It edits at a cursor, moves by control characters and ANSI (American National Standards
 //! Institute) sequences, kills and yanks, keeps [`HISTORY_LINES`] lines of history, ends a line on
 //! a carriage return (CR), a line feed (LF) or both (CRLF), and reports ^C, ^D, ^Z and Tab as an

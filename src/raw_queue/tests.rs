@@ -6,15 +6,15 @@ use crate::test_support::drain;
 fn raw_queue_reads_in_order_into_the_callers_buffer() {
     let mut q = RawQueue::new();
     assert!(q.is_empty());
-    assert_eq!(q.push(b"hello, kilo!"), 12); // 12 bytes, under the cap
+    assert_eq!(q.push(b"hello, raw!!"), 12); // 12 bytes, under the cap
     assert!(!q.is_empty());
 
     let mut buffer = [0u8; 8];
     assert_eq!(q.read(&mut buffer), 8);
-    assert_eq!(&buffer, b"hello, k");
+    assert_eq!(&buffer, b"hello, r");
 
     assert_eq!(q.read(&mut buffer), 4);
-    assert_eq!(&buffer[..4], b"ilo!");
+    assert_eq!(&buffer[..4], b"aw!!");
     assert!(q.is_empty());
     assert_eq!(q.read(&mut buffer), 0);
 }

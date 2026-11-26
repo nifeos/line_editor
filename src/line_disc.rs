@@ -101,7 +101,7 @@ enum EscapeState {
 /// # Examples
 ///
 /// Typing a line, editing it, and getting it back. The [`Sink`] is where echo goes; here a `Vec`,
-/// in the running system an endpoint.
+/// and on a device the serial port's transmitter.
 ///
 /// ```
 /// use line_editor::{Event, LineEditor, Sink};
@@ -178,7 +178,7 @@ impl LineEditor {
     /// An empty discipline: no line in progress, no history, prompt unset. `const` on purpose: the
     /// struct is a few KiB before the temporary a stack-local move would make, so a program with a
     /// small stack (one 4 KiB page, say) holds it in a `static` rather than in its entry point's
-    /// own frame.
+    /// own stack frame.
     pub const fn new() -> Self {
         LineEditor {
             buffer: [0; MAXIMUM_LINE_BYTES],
@@ -216,7 +216,7 @@ impl LineEditor {
         self.browse = None;
     }
 
-    /// **Resume a read the reader re-issued after a retry reply**: remember `prompt` as
+    /// **Resume a read that was interrupted and asked again**: remember `prompt` as
     /// [`start_line`](LineEditor::start_line) does, but paint nothing, because the screen already
     /// shows the prompt and the half-typed line. Painting again would print them twice.
     pub fn resume_line(&mut self, prompt: &[u8]) {
@@ -255,7 +255,7 @@ impl LineEditor {
     }
 
     /// Begin a read: remember `prompt` (for repaints) and paint it, followed by whatever the
-    /// user has already typed ahead. Called by the server when a `READLINE` request arrives.
+    /// user has already typed ahead. The caller calls it when its reader asks for a line.
     pub fn start_line(&mut self, prompt: &[u8], out: &mut (impl Sink + ?Sized)) {
         let n = prompt.len().min(MAXIMUM_PROMPT_BYTES);
         self.prompt[..n].copy_from_slice(&prompt[..n]);
@@ -360,7 +360,7 @@ impl LineEditor {
             }
             0x0c => {
                 // ^L: clear the screen, repaint prompt and line. The one operation that needs the
-                // prompt, which is why `READLINE` carries it.
+                // prompt, which is why `start_line` takes it.
                 self.clear_and_repaint(out);
                 None
             }

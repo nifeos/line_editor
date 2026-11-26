@@ -2,15 +2,15 @@
 //!
 //! Its fields are `pub(super)` because `handoff` saves and restores them.
 
-/// How many raw bytes [`RawQueue`] holds for a parked `OPERATION_READRAW`, when bytes arrive faster than
-/// the raw reader drains them. Sized like [`MAXIMUM_LINE_BYTES`](crate::MAXIMUM_LINE_BYTES)'s bell-on-overflow
-/// precedent: a burst past this is dropped, audibly, rather than grown without bound. 64 is
-/// generous for a keystroke-at-a time reader (`kilo`'s own event loop reads one key, redraws, reads
-/// the next) and still covers a terminal-paste dumped in one go.
+/// How many raw bytes [`RawQueue`] holds while its reader is not reading, when bytes arrive faster
+/// than the reader drains them. Sized like [`MAXIMUM_LINE_BYTES`](crate::MAXIMUM_LINE_BYTES)'s
+/// bell-on-overflow precedent: a burst past this is dropped, audibly, rather than grown without
+/// bound. 64 is generous for a reader that takes a keystroke at a time (a full-screen editor's
+/// event loop reads one key, redraws, reads the next) and still covers a short paste.
 pub const MAXIMUM_RAW_QUEUE_BYTES: usize = 64;
 
-/// **Raw-mode byte delivery** (`OPERATION_READRAW`): a plain first-in, first-out (FIFO) queue of wire bytes, with no
-/// interpretation of any of them. Kept separate from [`LineEditor`](crate::LineEditor) rather than a mode bit on it,
+/// **Raw-mode byte delivery**: a plain first-in, first-out (FIFO) queue of input bytes, for a
+/// reader that wants every byte as it was typed, with no interpretation of any of them. Kept separate from [`LineEditor`](crate::LineEditor) rather than a mode bit on it,
 /// because raw mode's whole point is that nothing here ever looks at what a byte means; a
 /// `LineEditor` exists to do exactly that.
 pub struct RawQueue {

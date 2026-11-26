@@ -53,8 +53,8 @@ fn a_handed_off_discipline_carries_on_where_the_old_one_stopped() {
     );
 }
 
-/// **A blob this build cannot read is refused whole, with the reason**, which is what lets a
-/// supervisor not commit a swap to it.
+/// **A blob this build cannot read is refused whole, with the reason**, which is what lets the
+/// caller keep the old program running instead.
 #[test]
 fn a_blob_in_another_layout_or_none_at_all_is_refused() {
     assert_eq!(
@@ -290,8 +290,8 @@ fn the_blob_layout_is_pinned_byte_for_byte() {
 
 /// **The blob has an upper bound**: with every buffer full the editor's part is the header, the
 /// line, the cursor, the kill buffer, the prompt, two history words and eight full history
-/// slots, 2688 bytes, and the raw queue's part is a length word and up to 64 bytes. Both fit the
-/// one page the terminal's handoff frame has.
+/// slots, 2688 bytes, and the raw queue's part is a length word and up to 64 bytes. Both fit one
+/// 4 KiB page.
 #[test]
 fn a_full_blob_is_the_documented_size() {
     let mut d = LineEditor::new();

@@ -1,8 +1,8 @@
 //! **The output side**: [`Sink`], where echo bytes go, and [`expand_output`], the newline
 //! translation applied to what an application prints.
 
-/// Where echo bytes go. The server implements this over its console channel; the tests
-/// implement it over a terminal model.
+/// Where echo bytes go. A caller implements it over its serial port, its terminal or a buffer;
+/// the tests implement it over a terminal model.
 pub trait Sink {
     /// Write echo bytes out. Never called with an empty slice, so an implementation may treat a
     /// call as a message to send. Called synchronously from the byte-feeding methods below, so a
@@ -12,7 +12,7 @@ pub trait Sink {
 
 /// Output-side processing: translate `\n` to `\r\n` so applications can speak Unix newlines to
 /// a serial terminal that wants a carriage return. Everything else, ANSI included, passes
-/// through untouched: the wire belongs to the application when it is printing.
+/// through untouched: the terminal belongs to the application when it is printing.
 pub fn expand_output(source: &[u8], out: &mut (impl Sink + ?Sized)) {
     let mut from = 0;
     for (i, &b) in source.iter().enumerate() {
