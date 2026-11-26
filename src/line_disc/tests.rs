@@ -833,3 +833,81 @@ fn debug_prints_positions_and_not_the_line() {
     assert!(printed.contains("length_bytes: 6"), "{printed}");
     assert!(!printed.contains("115"), "{printed}"); // no byte of "secret" as a number
 }
+
+/// **A character at either end of a full line moves and deletes whole**: Left, Right, Backspace
+/// and Delete find the edges of a four-byte character at byte 0 and at the last byte the line
+/// holds.
+#[test]
+fn a_character_at_either_end_of_a_full_line_moves_and_deletes_whole() {
+    let (mut d, mut s) = (LineEditor::new(), Screen::new());
+    let mut line = std::string::String::from("😀");
+    line.push_str(&"a".repeat(MAXIMUM_LINE_BYTES - 8));
+    line.push('😀');
+    feed_all(&mut d, &mut s, line.as_bytes());
+    assert_eq!(d.pending(), (line.as_bytes(), MAXIMUM_LINE_BYTES));
+    feed_all(&mut d, &mut s, b"\x1b[D"); // Left over the last character
+    assert_eq!(d.pending().1, MAXIMUM_LINE_BYTES - 4);
+    feed_all(&mut d, &mut s, b"\x1b[C"); // Right over it again
+    assert_eq!(d.pending().1, MAXIMUM_LINE_BYTES);
+    feed_all(&mut d, &mut s, b"\x01\x1b[C"); // Home, then Right over the first character
+    assert_eq!(d.pending().1, 4);
+    feed_all(&mut d, &mut s, b"\x1b[D"); // Left back to the start
+    assert_eq!(d.pending().1, 0);
+    feed_all(&mut d, &mut s, b"\x1b[3~"); // Delete the first character
+    assert_eq!(d.pending().0.len(), MAXIMUM_LINE_BYTES - 4);
+    feed_all(&mut d, &mut s, b"\x05\x7f"); // End, then Backspace over the last character
+    assert_eq!(d.pending().0, "a".repeat(MAXIMUM_LINE_BYTES - 8).as_bytes());
+    assert_eq!(s.text(), "a".repeat(MAXIMUM_LINE_BYTES - 8));
+}
+
+/// **A move never reads past the end of the line**, where the bytes of a deleted character are
+/// left behind: after the é of "éa" is deleted, the byte after the a still continues a
+/// character, and Right from the start stops at the end of the line.
+#[test]
+fn a_move_stops_at_the_end_of_the_line_whatever_lies_past_it() {
+    let (mut d, mut s) = (LineEditor::new(), Screen::new());
+    feed_all(&mut d, &mut s, "éa".as_bytes());
+    feed_all(&mut d, &mut s, b"\x01\x1b[3~"); // Home, then Delete the é
+    assert_eq!(d.pending(), (&b"a"[..], 0));
+    feed_all(&mut d, &mut s, b"\x1b[C"); // Right over the a
+    assert_eq!(d.pending(), (&b"a"[..], 1));
+    assert_eq!(s.cursor(), 1);
+}
+
+/// **A prompt is cut at a character boundary even at its first byte**: a prompt longer than the
+/// limit whose bytes all continue a character keeps none of them, and one whose limit falls
+/// exactly after a whole character keeps all of it.
+#[test]
+fn a_long_prompt_is_cut_at_a_boundary_at_either_end() {
+    let mut d = LineEditor::new();
+    d.resume_line(&[0x80; MAXIMUM_PROMPT_BYTES + 1]);
+    assert_eq!(d.prompt_length_bytes, 0);
+    let mut prompt = "a".repeat(MAXIMUM_PROMPT_BYTES - 2);
+    prompt.push_str("éé");
+    d.resume_line(prompt.as_bytes());
+    assert_eq!(d.prompt_length_bytes, MAXIMUM_PROMPT_BYTES);
+    prompt.insert(0, 'a');
+    d.resume_line(prompt.as_bytes());
+    assert_eq!(d.prompt_length_bytes, MAXIMUM_PROMPT_BYTES - 1);
+}
+
+/// **Left at the start of the line and Right at its end do nothing**, not even echo a move the
+/// terminal would then make past the prompt or past the line.
+#[test]
+fn a_move_off_either_end_of_the_line_echoes_nothing() {
+    let mut d = LineEditor::new();
+    let mut out = Raw(Vec::new());
+    for key in *b"\x1b[D" {
+        let _ = d.feed(key, &mut out);
+    }
+    for key in *b"\x1b[C" {
+        let _ = d.feed(key, &mut out);
+    }
+    assert_eq!(out.0, b"");
+    for key in "é\x1b[C\x01\x1b[D".bytes() {
+        let _ = d.feed(key, &mut out);
+    }
+    // The echo of é, then Home's one move left, and nothing from Right at the end or Left after Home.
+    assert_eq!(out.0, "é\x1b[D".as_bytes());
+    assert_eq!(d.pending().1, 0);
+}

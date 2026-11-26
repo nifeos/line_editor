@@ -715,25 +715,24 @@ impl LineEditor {
 
     /// True when `at` falls between two bytes of one character in the line.
     pub(crate) fn splits_a_character(&self, at: usize) -> bool {
-        at < self.length_bytes && is_continuation(self.buffer[at])
+        self.buffer[..self.length_bytes]
+            .get(at)
+            .is_some_and(|&byte| is_continuation(byte))
     }
 
     /// The start of the character before `at`, which is above zero.
     fn previous_boundary(&self, at: usize) -> usize {
-        let mut i = at - 1;
-        while i > 0 && is_continuation(self.buffer[i]) {
-            i -= 1;
-        }
-        i
+        (0..at)
+            .rev()
+            .find(|&i| !is_continuation(self.buffer[i]))
+            .unwrap_or(0)
     }
 
     /// The end of the character that starts at `at`, which is below the line's length.
     fn next_boundary(&self, at: usize) -> usize {
-        let mut i = at + 1;
-        while i < self.length_bytes && is_continuation(self.buffer[i]) {
-            i += 1;
-        }
-        i
+        (at + 1..self.length_bytes)
+            .find(|&i| !is_continuation(self.buffer[i]))
+            .unwrap_or(self.length_bytes)
     }
 
     /// Up arrow: show the previous (older) history entry. The first press stashes the line in
@@ -805,11 +804,10 @@ fn is_continuation(byte: u8) -> bool {
 
 /// The longest prefix of `text` no longer than `most` bytes that ends on a character boundary.
 fn character_floor(text: &[u8], most: usize) -> usize {
-    let mut n = text.len().min(most);
-    while n > 0 && n < text.len() && is_continuation(text[n]) {
-        n -= 1;
-    }
-    n
+    (0..=text.len().min(most))
+        .rev()
+        .find(|&n| text.get(n).is_none_or(|&byte| !is_continuation(byte)))
+        .unwrap_or(0)
 }
 
 /// Emit `CSI <n> D` (cursor left `n`), eliding the count when it is 1 and the whole sequence

@@ -352,3 +352,22 @@ fn a_wrapped_raw_queue_round_trips() {
     assert_eq!(a, b);
     assert_eq!(a.len(), 4 + 10);
 }
+
+/// **The framing types' `Debug` shows positions and sizes**, never the bytes they carry.
+#[test]
+fn the_framing_types_debug_shows_positions_and_not_the_bytes() {
+    use std::format;
+    let mut page = [0u8; 64];
+    let mut w = handoff::Writer::new(&mut page);
+    w.field(b"secret");
+    assert_eq!(
+        format!("{w:?}"),
+        "Writer { written_bytes: 18, buffer_bytes: 64, full: false }"
+    );
+    let n = w.finish().unwrap();
+    let r = handoff::Reader::new(&page[..n]).unwrap();
+    assert_eq!(
+        format!("{r:?}"),
+        "Reader { read_bytes: 8, buffer_bytes: 18 }"
+    );
+}
