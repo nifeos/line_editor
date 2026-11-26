@@ -13,6 +13,24 @@ pub const MAXIMUM_RAW_QUEUE_BYTES: usize = 64;
 /// reader that wants every byte as it was typed, with no interpretation of any of them. Kept separate from [`LineEditor`](crate::LineEditor) rather than a mode bit on it,
 /// because raw mode's whole point is that nothing here ever looks at what a byte means; a
 /// `LineEditor` exists to do exactly that.
+///
+/// # Examples
+///
+/// Bytes come out in the order they went in, and a burst past the bound is reported, not grown.
+///
+/// ```
+/// use line_editor::{MAXIMUM_RAW_QUEUE_BYTES, RawQueue};
+///
+/// let mut queue = RawQueue::new();
+/// assert_eq!(queue.push(b"\x1b[A"), 3); // an Up arrow, uninterpreted
+/// let mut bytes = [0u8; 8];
+/// let n = queue.read(&mut bytes);
+/// assert_eq!(&bytes[..n], b"\x1b[A");
+/// assert!(queue.is_empty());
+///
+/// let burst = [b'x'; MAXIMUM_RAW_QUEUE_BYTES + 10];
+/// assert_eq!(queue.push(&burst), MAXIMUM_RAW_QUEUE_BYTES); // the caller rings the bell for 10
+/// ```
 pub struct RawQueue {
     pub(super) buffer: [u8; MAXIMUM_RAW_QUEUE_BYTES],
     pub(super) head: usize,

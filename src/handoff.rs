@@ -129,6 +129,17 @@ impl fmt::Debug for Writer<'_> {
 /// saved, and [`Reader::finish`] says how far they read.
 ///
 /// The [`Writer`] example saves and restores a blob.
+///
+/// # Examples
+///
+/// A buffer that holds no blob, such as one never written, is refused with its reason.
+///
+/// ```
+/// use line_editor::handoff::{Reader, Refusal};
+///
+/// let never_written = [0u8; 64];
+/// assert_eq!(Reader::new(&never_written).err(), Some(Refusal::NoBlob));
+/// ```
 pub struct Reader<'a> {
     buffer: &'a [u8],
     at: usize,
