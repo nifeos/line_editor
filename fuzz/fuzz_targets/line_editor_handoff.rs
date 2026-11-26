@@ -50,7 +50,12 @@ fuzz_target!(|data: &[u8]| {
     let mut queue = RawQueue::new();
     if queue.restore(&mut reader).is_some() {
         let mut drained = 0;
-        while let Some((count, _)) = queue.pop_up_to_eight() {
+        let mut buffer = [0u8; 8];
+        loop {
+            let count = queue.read(&mut buffer);
+            if count == 0 {
+                break;
+            }
             drained += count;
             assert!(
                 drained <= MAXIMUM_RAW_QUEUE_BYTES,

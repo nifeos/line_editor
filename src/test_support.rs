@@ -1,7 +1,8 @@
-//! **The terminal model the tests share**: `Screen` and `feed_all`, kept outside any one test
-//! module because the editor's tests and `handoff`'s both drive a [`LineEditor`] on it.
+//! **The terminal model the tests share**: `Screen`, `feed_all` and `drain`, kept outside any one
+//! test module because the editor's tests and `handoff`'s both drive a [`LineEditor`] on it, and
+//! the raw queue's tests and `handoff`'s both drain a [`RawQueue`].
 
-use crate::{Event, LineEditor, Sink};
+use crate::{Event, LineEditor, MAXIMUM_RAW_QUEUE_BYTES, RawQueue, Sink};
 extern crate std;
 use std::string::String;
 use std::vec::Vec;
@@ -96,4 +97,23 @@ impl Sink for Screen {
 
 pub(super) fn feed_all(d: &mut LineEditor, s: &mut Screen, bytes: &[u8]) -> Vec<Event> {
     bytes.iter().filter_map(|&b| d.feed(b, s)).collect()
+}
+
+/// Every byte the queue holds, oldest first, read `chunk` bytes at a time. Bounded at one read per
+/// byte the ring can hold, so a `read` that never empties the queue fails instead of hanging.
+pub(super) fn drain(q: &mut RawQueue, chunk: usize) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    let mut buffer = [0u8; MAXIMUM_RAW_QUEUE_BYTES];
+    for _ in 0..=MAXIMUM_RAW_QUEUE_BYTES {
+        let n = q.read(&mut buffer[..chunk]);
+        if n == 0 {
+            return bytes;
+        }
+        assert!(
+            n <= chunk,
+            "a read moved {n} bytes into a buffer of {chunk}"
+        );
+        bytes.extend_from_slice(&buffer[..n]);
+    }
+    panic!("the queue never emptied");
 }

@@ -1,5 +1,5 @@
 use super::*;
-use crate::test_support::{Screen, feed_all};
+use crate::test_support::{Screen, drain, feed_all};
 use crate::{MAXIMUM_LINE_BYTES, MAXIMUM_PROMPT_BYTES, MAXIMUM_RAW_QUEUE_BYTES, RawQueue, handoff};
 extern crate std;
 use std::vec::Vec;
@@ -151,13 +151,8 @@ fn the_raw_queue_crosses_a_swap_in_order_across_the_wrap() {
     let mut q = RawQueue::new();
     let first: Vec<u8> = (0..60).collect();
     q.push(&first);
-    // Bounded, so a `pop_up_to_eight` that never shortens the queue fails the assertion instead of hanging.
-    for _ in 0..MAXIMUM_RAW_QUEUE_BYTES {
-        if q.length_bytes <= 4 {
-            break;
-        }
-        q.pop_up_to_eight();
-    }
+    let mut skipped = [0u8; 56];
+    assert_eq!(q.read(&mut skipped), 56);
     assert_eq!(q.length_bytes, 4);
     let more: Vec<u8> = (100..110).collect();
     q.push(&more); // the ring wraps: head is near the end
@@ -171,20 +166,10 @@ fn the_raw_queue_crosses_a_swap_in_order_across_the_wrap() {
     let mut r = handoff::Reader::new(&page[..n]).unwrap();
     assert_eq!(copy.restore(&mut r), Some(()));
 
-    let drain = |q: &mut RawQueue| {
-        let mut out = Vec::new();
-        for _ in 0..=MAXIMUM_RAW_QUEUE_BYTES {
-            let Some((n, packed)) = q.pop_up_to_eight() else {
-                break;
-            };
-            out.extend_from_slice(&packed.to_le_bytes()[..n]);
-        }
-        out
-    };
     let mut expect: Vec<u8> = (56..60).collect();
     expect.extend(100..110);
-    assert_eq!(drain(&mut q), expect);
-    assert_eq!(drain(&mut copy), expect);
+    assert_eq!(drain(&mut q, 8), expect);
+    assert_eq!(drain(&mut copy, 8), expect);
 
     let mut w = handoff::Writer::new(&mut page);
     RawQueue::new().save(&mut w);
@@ -256,13 +241,7 @@ fn a_full_blob_is_the_documented_size() {
 fn a_wrapped_raw_queue_round_trips() {
     let mut q = RawQueue::new();
     q.push(&[1; 60]);
-    q.pop_up_to_eight();
-    q.pop_up_to_eight();
-    q.pop_up_to_eight();
-    q.pop_up_to_eight();
-    q.pop_up_to_eight();
-    q.pop_up_to_eight();
-    q.pop_up_to_eight(); // 56 popped: head is at 56
+    assert_eq!(q.read(&mut [0; 56]), 56); // head is at 56
     q.push(&[9, 9, 9, 9, 9, 9, 9, 9, 8, 8]); // wraps the ring
     let mut page = [0u8; 128];
     let mut w = handoff::Writer::new(&mut page);
@@ -271,25 +250,8 @@ fn a_wrapped_raw_queue_round_trips() {
     let mut got = RawQueue::new();
     got.restore(&mut handoff::Reader::new(&page[..n]).unwrap())
         .unwrap();
-    let a = drain(&mut q);
-    let b = drain(&mut got);
+    let a = drain(&mut q, 8);
+    let b = drain(&mut got, 8);
     assert_eq!(a, b);
     assert_eq!(a.len(), 4 + 10);
-}
-
-/// Every byte a raw queue holds, oldest first. Bounded at one pop per byte the ring can hold, so a
-/// `pop_up_to_eight` that never empties the queue fails the assertion instead of hanging.
-fn drain(q: &mut RawQueue) -> Vec<u8> {
-    let mut bytes = Vec::new();
-    for _ in 0..=MAXIMUM_RAW_QUEUE_BYTES {
-        let Some((n, packed)) = q.pop_up_to_eight() else {
-            return bytes;
-        };
-        assert!(
-            (1..=8).contains(&n),
-            "a pop returns one to eight bytes, got {n}"
-        );
-        bytes.extend_from_slice(&packed.to_le_bytes()[..n]);
-    }
-    panic!("the queue never emptied");
 }

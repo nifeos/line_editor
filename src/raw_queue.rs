@@ -55,20 +55,31 @@ impl RawQueue {
         n
     }
 
-    /// Pop up to 8 bytes (the register-only reply's own limit), packed little-endian. `None` if
-    /// the queue is empty.
-    pub fn pop_up_to_eight(&mut self) -> Option<(usize, u64)> {
-        if self.length_bytes == 0 {
-            return None;
-        }
-        let n = self.length_bytes.min(8);
-        let mut packed = 0u64;
-        for i in 0..n {
-            packed |= (self.buffer[(self.head + i) % MAXIMUM_RAW_QUEUE_BYTES] as u64) << (8 * i);
+    /// Move the oldest queued bytes into `buffer`, as many as it holds, and return how many
+    /// moved. Returns 0 when the queue is empty or `buffer` is.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use line_editor::RawQueue;
+    ///
+    /// let mut queue = RawQueue::new();
+    /// assert_eq!(queue.push(b"hello"), 5);
+    /// let mut buffer = [0u8; 3];
+    /// assert_eq!(queue.read(&mut buffer), 3);
+    /// assert_eq!(&buffer, b"hel");
+    /// assert_eq!(queue.read(&mut buffer), 2);
+    /// assert_eq!(&buffer[..2], b"lo");
+    /// assert_eq!(queue.read(&mut buffer), 0);
+    /// ```
+    pub fn read(&mut self, buffer: &mut [u8]) -> usize {
+        let n = self.length_bytes.min(buffer.len());
+        for (i, slot) in buffer[..n].iter_mut().enumerate() {
+            *slot = self.buffer[(self.head + i) % MAXIMUM_RAW_QUEUE_BYTES];
         }
         self.head = (self.head + n) % MAXIMUM_RAW_QUEUE_BYTES;
         self.length_bytes -= n;
-        Some((n, packed))
+        n
     }
 }
 
