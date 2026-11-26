@@ -271,14 +271,15 @@ impl LineEditor {
     /// - [`Refusal::Truncated`] when the blob ends before the editor's state does.
     /// - [`Refusal::FieldTooLong`] when a line, the kill buffer or the prompt is longer than this
     ///   build holds.
-    /// - [`Refusal::Malformed`] when the cursor lies past the end of its line.
+    /// - [`Refusal::Malformed`] when the cursor lies past the end of its line or inside one of its
+    ///   characters.
     ///
     /// On any of them nothing is returned, so no half-restored editor reaches the caller.
     pub fn restore(reader: &mut Reader<'_>) -> Result<LineEditor, Refusal> {
         let mut editor = LineEditor::new();
         editor.length_bytes = reader.field(&mut editor.buffer)?;
         let cursor = reader.u32()? as usize;
-        if cursor > editor.length_bytes {
+        if cursor > editor.length_bytes || editor.splits_a_character(cursor) {
             return Err(Refusal::Malformed);
         }
         editor.cursor = cursor;

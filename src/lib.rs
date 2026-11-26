@@ -13,14 +13,14 @@
 //!
 //! | Input | Effect |
 //! |---|---|
-//! | printable ASCII (0x20 to 0x7e) | insert at the cursor |
-//! | `^B`, `^F`, Left, Right | move one byte |
+//! | a printable character, ASCII or UTF-8 | insert at the cursor, echoed once it is whole |
+//! | `^B`, `^F`, Left, Right | move one character |
 //! | `^A`, `^E`, Home, End | move to the start or the end |
 //! | `^K` | kill from the cursor to the end into the kill buffer |
 //! | `^U` | kill from the start to the cursor |
 //! | `^W` | kill the word before the cursor (blanks, then non-blanks) |
 //! | `^Y` | insert the kill buffer at the cursor |
-//! | Backspace (0x08, 0x7f), Delete | delete before, or under, the cursor |
+//! | Backspace (0x08, 0x7f), Delete | delete the character before, or under, the cursor |
 //! | Up, Down | step through history, the line in progress stashed |
 //! | `^L` | clear the screen and repaint the prompt and the line |
 //! | CR, LF, CRLF | end the line ([`Event::Line`]) |
@@ -32,19 +32,24 @@
 //! The arrow, Home, End and Delete keys arrive as `ESC [ ...` or `ESC O ...` sequences. An
 //! unrecognized final byte drops the whole sequence, and an X10 mouse report (`ESC [ M` and three
 //! payload bytes) is dropped with its payload. A second Escape is the same introducer.
+//!
+//! A byte at or above 0x80 is part of a UTF-8 character. The editor holds it until the character
+//! is whole, then inserts and echoes the character; it drops, without echo, a malformed sequence
+//! and a C1 control character (U+0080 to U+009F). Each character takes one column.
 
 //! # Limits
 //!
 //! | Constant | Value | What it bounds |
 //! |---|---|---|
-//! | [`MAXIMUM_LINE_BYTES`] | 256 | bytes in a line; the next printable byte is refused with a bell |
-//! | [`MAXIMUM_PROMPT_BYTES`] | 64 | bytes of prompt repainted; a longer prompt is truncated |
+//! | [`MAXIMUM_LINE_BYTES`] | 256 | bytes in a line; a character that does not fit is refused with a bell |
+//! | [`MAXIMUM_PROMPT_BYTES`] | 64 | bytes of prompt repainted; a longer prompt is cut at a character boundary |
 //! | [`HISTORY_LINES`] | 8 | history lines held; the oldest is overwritten |
 //! | [`MAXIMUM_RAW_QUEUE_BYTES`] | 64 | bytes a [`RawQueue`] holds; a burst past it is dropped |
 //!
 //! # Example
 //!
-//! The engine does no IO. Bytes go in one at a time, and echo comes out through a [`Sink`].
+//! The engine reads and writes no device itself. Bytes go in one at a time, and echo comes out
+//! through a [`Sink`].
 //!
 //! ```
 //! use line_editor::{Event, LineEditor, Sink};
@@ -68,8 +73,9 @@
 
 //! # BUGS
 //!
-//! - Input is ASCII only. A byte at or above 0x80 is dropped without echo, so UTF-8 text typed
-//!   into the line vanishes silently.
+//! - Each character takes one column, so a wide character (a Chinese, Japanese or Korean ideograph, many emoji) or a
+//!   combining mark puts the cursor out of step with the screen. Knowing a character's width
+//!   needs the Unicode tables, which the crate does not carry.
 //! - The redraw math assumes one row, so a line that wraps past the margin redraws wrongly;
 //!   [`MAXIMUM_LINE_BYTES`] keeps that rare. The editor tracks no terminal size, because asking for it
 //!   would block on a terminal that never answers.

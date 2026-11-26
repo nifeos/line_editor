@@ -225,6 +225,28 @@ fn a_restored_cursor_stays_inside_its_line_and_history_keeps_its_place() {
     assert!(LineEditor::restore(&mut r).is_ok());
 }
 
+/// A cursor saved between two bytes of one character is refused, since the editor never puts it
+/// there and every move would then land off the character boundaries.
+#[test]
+fn a_cursor_inside_a_character_is_malformed() {
+    let (mut old, mut s) = (LineEditor::new(), Screen::new());
+    feed_all(&mut old, &mut s, "aé".as_bytes());
+    let mut page = [0u8; 4096];
+    let mut w = handoff::Writer::new(&mut page);
+    old.save(&mut w);
+    let n = w.finish().unwrap();
+    // The header is 8 bytes, the line field 4 + 3, so the cursor word sits at 15; 2 is inside é.
+    page[15..19].copy_from_slice(&2u32.to_le_bytes());
+    let mut r = handoff::Reader::new(&page[..n]).unwrap();
+    assert_eq!(
+        LineEditor::restore(&mut r).err(),
+        Some(handoff::Refusal::Malformed)
+    );
+    page[15..19].copy_from_slice(&1u32.to_le_bytes());
+    let mut r = handoff::Reader::new(&page[..n]).unwrap();
+    assert_eq!(LineEditor::restore(&mut r).unwrap().pending().1, 1);
+}
+
 /// **Unread raw bytes cross a swap in order**, including when the ring has wrapped, and an
 /// empty queue stays empty.
 #[test]

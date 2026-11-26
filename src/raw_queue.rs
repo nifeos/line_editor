@@ -91,12 +91,12 @@ impl RawQueue {
     /// use line_editor::RawQueue;
     ///
     /// let mut queue = RawQueue::new();
-    /// assert_eq!(queue.push(b"hello"), 5);
+    /// assert_eq!(queue.push(b"abcde"), 5);
     /// let mut buffer = [0u8; 3];
     /// assert_eq!(queue.read(&mut buffer), 3);
-    /// assert_eq!(&buffer, b"hel");
+    /// assert_eq!(&buffer, b"abc");
     /// assert_eq!(queue.read(&mut buffer), 2);
-    /// assert_eq!(&buffer[..2], b"lo");
+    /// assert_eq!(&buffer[..2], b"de");
     /// assert_eq!(queue.read(&mut buffer), 0);
     /// ```
     pub fn read(&mut self, buffer: &mut [u8]) -> usize {

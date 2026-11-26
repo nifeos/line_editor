@@ -40,6 +40,16 @@ fn inserted_text_lands_at_the_cursor_and_control_bytes_are_refused() {
     assert_eq!(d.line(), b"cat docs/[2J x");
 }
 
+/// Inserted text may hold UTF-8, which lands whole, while a C1 control and a malformed sequence
+/// are skipped.
+#[test]
+fn inserted_text_keeps_utf8_and_skips_what_is_not_printable() {
+    let (mut d, mut s) = (LineEditor::new(), Screen::new());
+    d.insert_text(b"\xc3\xa9t\xc3\xa9\xc2\x9b2J\xff!", &mut s);
+    assert_eq!(d.pending(), ("été2J!".as_bytes(), "été2J!".len()));
+    assert_eq!(s.text(), "été2J!");
+}
+
 /// A repaint after a listing redraws the prompt and the line with the cursor where it was.
 #[test]
 fn repaint_restores_prompt_line_and_cursor() {
@@ -635,13 +645,71 @@ fn a_mouse_report_is_dropped_with_its_payload() {
     assert_eq!(d.pending().0, b"abcd");
 }
 
-/// A byte at or above 0x80 is dropped without echo: input is ASCII only (the crate `BUGS` says so).
+/// A UTF-8 character is inserted and echoed once it is whole, never half of it.
 #[test]
-fn a_byte_above_ascii_is_dropped_without_echo() {
+fn a_utf8_character_is_echoed_when_whole() {
     let (mut d, mut s) = (LineEditor::new(), Screen::new());
-    feed_all(&mut d, &mut s, b"a\xc3\xa9b");
-    assert_eq!(d.pending().0, b"ab");
-    assert_eq!(s.text(), "ab");
+    feed_all(&mut d, &mut s, b"a\xc3");
+    assert_eq!(d.pending().0, b"a");
+    assert_eq!(s.text(), "a");
+    feed_all(&mut d, &mut s, b"\xa9b");
+    assert_eq!(d.pending(), ("aéb".as_bytes(), 4));
+    assert_eq!(s.text(), "aéb");
+}
+
+/// The cursor moves, and Backspace and Delete remove, one character at a time, however many
+/// bytes it takes, and the screen stays in step.
+#[test]
+fn editing_moves_by_character() {
+    let (mut d, mut s) = (LineEditor::new(), Screen::new());
+    feed_all(&mut d, &mut s, "añ€😀z".as_bytes());
+    feed_all(&mut d, &mut s, b"\x1b[D\x1b[D"); // Left twice: before the 😀
+    assert_eq!(d.pending().1, "añ€".len());
+    assert_eq!(s.cursor(), 3);
+    feed_all(&mut d, &mut s, b"\x7f"); // Backspace removes the three-byte €
+    assert_eq!(d.pending(), ("añ😀z".as_bytes(), "añ".len()));
+    feed_all(&mut d, &mut s, b"\x1b[3~"); // Delete removes the four-byte 😀
+    assert_eq!(d.pending(), ("añz".as_bytes(), "añ".len()));
+    assert_eq!(s.text(), "añz");
+    assert_eq!(s.cursor(), 2);
+    feed_all(&mut d, &mut s, b"\x01\x1b[C"); // Home, then Right over the a
+    assert_eq!(d.pending().1, 1);
+    feed_all(&mut d, &mut s, b"\x1b[C"); // Right over the two-byte ñ
+    assert_eq!(d.pending().1, 3);
+    assert_eq!(s.cursor(), 2);
+    feed_all(&mut d, &mut s, b"\x05"); // End
+    assert_eq!(s.cursor(), 3);
+}
+
+/// A malformed sequence and a C1 control character are dropped without echo, and a leading byte
+/// abandons the half character before it.
+#[test]
+fn malformed_utf8_is_dropped_without_echo() {
+    let (mut d, mut s) = (LineEditor::new(), Screen::new());
+    // A lone continuation byte, an overlong slash, a surrogate, a byte never in UTF-8, a C1
+    // control (U+0085), and a leading byte cut short by an ASCII one.
+    feed_all(
+        &mut d,
+        &mut s,
+        b"a\x80\xc0\xaf\xed\xa0\x80\xff\xc2\x85\xe2\x82b\xe2\xc3\xa9",
+    );
+    assert_eq!(d.pending().0, "abé".as_bytes());
+    assert_eq!(s.text(), "abé");
+}
+
+/// A yank that does not fit stops before a character it would split.
+#[test]
+fn a_yank_never_splits_a_character() {
+    let (mut d, mut s) = (LineEditor::new(), Screen::new());
+    feed_all(&mut d, &mut s, "éé".as_bytes());
+    feed_all(&mut d, &mut s, b"\x15"); // kill both, four bytes
+    let filler = [b'x'; MAXIMUM_LINE_BYTES - 3];
+    feed_all(&mut d, &mut s, &filler);
+    feed_all(&mut d, &mut s, b"\x19"); // room for three bytes: one é
+    let (line, cursor) = d.pending();
+    assert_eq!(line.len(), MAXIMUM_LINE_BYTES - 1);
+    assert_eq!(cursor, line.len());
+    assert!(core::str::from_utf8(line).is_ok());
 }
 
 /// Yanking more than fits fills the line to its limit and keeps the cursor and length consistent,

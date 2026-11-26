@@ -11,12 +11,12 @@ at its end when the sequence `CSI C` arrives.
 diff --git a/src/line_disc.rs b/src/line_disc.rs
 --- a/src/line_disc.rs
 +++ b/src/line_disc.rs
-@@ -597,7 +597,7 @@
+@@ -688,7 +688,7 @@
      }
  
-     fn right(&mut self, out: &mut impl Sink) {
+     fn right(&mut self, out: &mut (impl Sink + ?Sized)) {
 -        if self.cursor < self.length_bytes {
 +        if self.cursor <= self.length_bytes {
-             self.cursor += 1;
+             self.cursor = self.next_boundary(self.cursor);
              out.put(b"\x1b[C");
          }

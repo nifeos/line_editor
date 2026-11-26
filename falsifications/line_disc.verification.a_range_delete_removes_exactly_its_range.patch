@@ -10,12 +10,12 @@ Expected to fail: the harness's check that the cursor lands on `a` when it was i
 diff --git a/src/line_disc.rs b/src/line_disc.rs
 --- a/src/line_disc.rs
 +++ b/src/line_disc.rs
-@@ -558,7 +558,7 @@
+@@ -647,7 +647,7 @@
          self.cursor = if old_cursor >= b {
              old_cursor - removed
          } else {
 -            old_cursor.min(a)
 +            old_cursor
          };
-         csi_left(out, old_cursor - a);
+         csi_left(out, removed_columns);
          if a < self.length_bytes {
