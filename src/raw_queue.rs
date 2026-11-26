@@ -19,6 +19,15 @@ pub struct RawQueue {
     pub(super) length_bytes: usize,
 }
 
+/// Prints how many bytes are queued, never the bytes themselves.
+impl core::fmt::Debug for RawQueue {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("RawQueue")
+            .field("length_bytes", &self.length_bytes)
+            .finish_non_exhaustive()
+    }
+}
+
 impl Default for RawQueue {
     fn default() -> Self {
         Self::new()

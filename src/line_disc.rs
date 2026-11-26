@@ -61,7 +61,7 @@ const ESC: u8 = 0x1b;
 /// assert_eq!(ld.feed(b'\r', &mut out), Some(Event::Line));
 /// assert_eq!(ld.line(), b"ls");
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Event {
     /// A line is complete; read it with [`LineEditor::line`] before feeding the next byte.
@@ -151,6 +151,21 @@ pub struct LineEditor {
     pub(super) prompt_length_bytes: usize,
     escape: EscapeState,
     last_was_cr: bool,
+}
+
+/// Prints lengths and positions, never the bytes of a line, so a log of an editor does not carry
+/// what was typed into it.
+impl core::fmt::Debug for LineEditor {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("LineEditor")
+            .field("length_bytes", &self.length_bytes)
+            .field("cursor", &self.cursor)
+            .field("kill_length_bytes", &self.kill_length_bytes)
+            .field("prompt_length_bytes", &self.prompt_length_bytes)
+            .field("history_count", &self.history_count)
+            .field("browse", &self.browse)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Default for LineEditor {

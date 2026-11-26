@@ -746,3 +746,22 @@ fn recalling_the_empty_line_in_progress_puts_only_the_erase() {
     }
     assert_eq!(out.0, [b"\x1b[2D".to_vec(), b"\x1b[K".to_vec()]);
 }
+
+/// **An editor's `Debug` shows where it is and not what was typed**, so a log line about an editor
+/// cannot leak a password typed at its prompt.
+#[test]
+fn debug_prints_positions_and_not_the_line() {
+    use std::format;
+    let (mut d, mut s) = (LineEditor::new(), Screen::new());
+    d.start_line(b"$ ", &mut s);
+    feed_all(&mut d, &mut s, b"secret\x02");
+    let printed = format!("{d:?}");
+    assert!(printed.contains("length_bytes: 6"), "{printed}");
+    assert!(printed.contains("cursor: 5"), "{printed}");
+    assert!(!printed.contains("secret"), "{printed}");
+    let mut q = crate::RawQueue::new();
+    q.push(b"secret");
+    let printed = format!("{q:?}");
+    assert!(printed.contains("length_bytes: 6"), "{printed}");
+    assert!(!printed.contains("115"), "{printed}"); // no byte of "secret" as a number
+}
