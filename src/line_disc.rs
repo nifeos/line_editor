@@ -219,7 +219,7 @@ impl LineEditor {
     /// Insert `text` at the cursor as if it had been typed, echoing it. Printable bytes only; any
     /// other byte is skipped rather than inserted, so a completion cannot smuggle a control
     /// sequence into the line. What does not fit in [`MAXIMUM_LINE_BYTES`] is refused with a bell.
-    pub fn insert_text(&mut self, text: &[u8], out: &mut impl Sink) {
+    pub fn insert_text(&mut self, text: &[u8], out: &mut (impl Sink + ?Sized)) {
         for &b in text {
             if (0x20..=0x7e).contains(&b) {
                 self.insert(b, out);
@@ -229,7 +229,7 @@ impl LineEditor {
 
     /// Paint the prompt and the line again on a fresh row, cursor where it was. For a caller that
     /// printed something between two keystrokes, as a completion listing does.
-    pub fn repaint(&mut self, out: &mut impl Sink) {
+    pub fn repaint(&mut self, out: &mut (impl Sink + ?Sized)) {
         if self.prompt_length_bytes > 0 {
             out.put(&self.prompt[..self.prompt_length_bytes]);
         }
@@ -241,7 +241,7 @@ impl LineEditor {
 
     /// Begin a read: remember `prompt` (for repaints) and paint it, followed by whatever the
     /// user has already typed ahead. Called by the server when a `READLINE` request arrives.
-    pub fn start_line(&mut self, prompt: &[u8], out: &mut impl Sink) {
+    pub fn start_line(&mut self, prompt: &[u8], out: &mut (impl Sink + ?Sized)) {
         let n = prompt.len().min(MAXIMUM_PROMPT_BYTES);
         self.prompt[..n].copy_from_slice(&prompt[..n]);
         self.prompt_length_bytes = n;
@@ -272,7 +272,7 @@ impl LineEditor {
     /// // The LF of the CRLF pair is not a second, empty line.
     /// assert_eq!(ld.feed(b'\n', &mut out), None);
     /// ```
-    pub fn feed(&mut self, b: u8, out: &mut impl Sink) -> Option<Event> {
+    pub fn feed(&mut self, b: u8, out: &mut (impl Sink + ?Sized)) -> Option<Event> {
         // A bare LF right after a CR is the second half of a CRLF, not a second Enter.
         let was_cr = core::mem::replace(&mut self.last_was_cr, false);
         if b == b'\n' && was_cr {
@@ -364,7 +364,12 @@ impl LineEditor {
     /// The byte after an escape introducer, or inside a CSI sequence, in escape state `state`.
     /// False when no escape was in progress and the byte is an ordinary key. No escape sequence
     /// amounts to an event, so a byte it consumes is only ever echo.
-    fn continue_escape(&mut self, state: EscapeState, b: u8, out: &mut impl Sink) -> bool {
+    fn continue_escape(
+        &mut self,
+        state: EscapeState,
+        b: u8,
+        out: &mut (impl Sink + ?Sized),
+    ) -> bool {
         match state {
             EscapeState::Idle => false,
             EscapeState::Esc => {
@@ -426,7 +431,7 @@ impl LineEditor {
     }
 
     /// ^D: end of input on an empty line, otherwise delete the byte under the cursor.
-    fn eof_or_delete(&mut self, out: &mut impl Sink) -> Option<Event> {
+    fn eof_or_delete(&mut self, out: &mut (impl Sink + ?Sized)) -> Option<Event> {
         if self.length_bytes == 0 {
             Some(Event::Eof)
         } else {
@@ -436,7 +441,7 @@ impl LineEditor {
     }
 
     /// ^K: move everything from the cursor to the end of the line into the kill buffer.
-    fn kill_to_end(&mut self, out: &mut impl Sink) {
+    fn kill_to_end(&mut self, out: &mut (impl Sink + ?Sized)) {
         self.kill[..self.length_bytes - self.cursor]
             .copy_from_slice(&self.buffer[self.cursor..self.length_bytes]);
         self.kill_length_bytes = self.length_bytes - self.cursor;
@@ -445,14 +450,14 @@ impl LineEditor {
     }
 
     /// ^U: move everything before the cursor into the kill buffer.
-    fn kill_to_start(&mut self, out: &mut impl Sink) {
+    fn kill_to_start(&mut self, out: &mut (impl Sink + ?Sized)) {
         self.kill[..self.cursor].copy_from_slice(&self.buffer[..self.cursor]);
         self.kill_length_bytes = self.cursor;
         self.delete_range(0, self.cursor, out);
     }
 
     /// ^W: move the word before the cursor (blanks, then non-blanks) into the kill buffer.
-    fn kill_word_before(&mut self, out: &mut impl Sink) {
+    fn kill_word_before(&mut self, out: &mut (impl Sink + ?Sized)) {
         let mut a = self.cursor;
         while a > 0 && self.buffer[a - 1] == b' ' {
             a -= 1;
@@ -466,13 +471,13 @@ impl LineEditor {
     }
 
     /// ^L: clear the screen and paint the prompt and the line, cursor where it was.
-    fn clear_and_repaint(&mut self, out: &mut impl Sink) {
+    fn clear_and_repaint(&mut self, out: &mut (impl Sink + ?Sized)) {
         out.put(b"\x1b[2J\x1b[H");
         self.repaint(out);
     }
 
     /// A CSI (or SS3) final byte, with its first numeric parameter.
-    fn csi_final(&mut self, b: u8, p: u16, out: &mut impl Sink) {
+    fn csi_final(&mut self, b: u8, p: u16, out: &mut (impl Sink + ?Sized)) {
         match (b, p) {
             (b'D', _) => self.left(out),
             (b'C', _) => self.right(out),
@@ -485,7 +490,7 @@ impl LineEditor {
         }
     }
 
-    fn finish_line(&mut self, out: &mut impl Sink) -> Event {
+    fn finish_line(&mut self, out: &mut (impl Sink + ?Sized)) -> Event {
         out.put(b"\r\n");
         self.done[..self.length_bytes].copy_from_slice(&self.buffer[..self.length_bytes]);
         self.done_length_bytes = self.length_bytes;
@@ -515,7 +520,7 @@ impl LineEditor {
             && entry[..*entry_length] == self.buffer[..self.length_bytes]
     }
 
-    fn insert(&mut self, b: u8, out: &mut impl Sink) {
+    fn insert(&mut self, b: u8, out: &mut (impl Sink + ?Sized)) {
         if self.length_bytes >= MAXIMUM_LINE_BYTES {
             out.put(&[BEL]);
             return;
@@ -535,14 +540,14 @@ impl LineEditor {
         }
     }
 
-    fn backspace(&mut self, out: &mut impl Sink) {
+    fn backspace(&mut self, out: &mut (impl Sink + ?Sized)) {
         if self.cursor == 0 {
             return;
         }
         self.delete_range(self.cursor - 1, self.cursor, out);
     }
 
-    fn delete_at(&mut self, out: &mut impl Sink) {
+    fn delete_at(&mut self, out: &mut (impl Sink + ?Sized)) {
         if self.cursor == self.length_bytes {
             return;
         }
@@ -553,7 +558,7 @@ impl LineEditor {
     /// tail, erase the leftover columns, step back to the cursor. CSI K does the erasing, so no
     /// space-padding arithmetic. Works for both directions: a backward kill has the cursor at
     /// `b` (it moves left with the deletion), a forward delete has it at `a` (it stays put).
-    fn delete_range(&mut self, a: usize, b: usize, out: &mut impl Sink) {
+    fn delete_range(&mut self, a: usize, b: usize, out: &mut (impl Sink + ?Sized)) {
         debug_assert!(a <= b && b <= self.length_bytes && a <= self.cursor);
         let removed = b - a;
         if removed == 0 {
@@ -575,7 +580,7 @@ impl LineEditor {
         csi_left(out, self.length_bytes - self.cursor);
     }
 
-    fn yank(&mut self, out: &mut impl Sink) {
+    fn yank(&mut self, out: &mut (impl Sink + ?Sized)) {
         let n = self
             .kill_length_bytes
             .min(MAXIMUM_LINE_BYTES - self.length_bytes);
@@ -596,33 +601,33 @@ impl LineEditor {
         csi_left(out, self.length_bytes - self.cursor);
     }
 
-    fn left(&mut self, out: &mut impl Sink) {
+    fn left(&mut self, out: &mut (impl Sink + ?Sized)) {
         if self.cursor > 0 {
             self.cursor -= 1;
             out.put(&[BS]);
         }
     }
 
-    fn right(&mut self, out: &mut impl Sink) {
+    fn right(&mut self, out: &mut (impl Sink + ?Sized)) {
         if self.cursor < self.length_bytes {
             self.cursor += 1;
             out.put(b"\x1b[C");
         }
     }
 
-    fn home(&mut self, out: &mut impl Sink) {
+    fn home(&mut self, out: &mut (impl Sink + ?Sized)) {
         csi_left(out, self.cursor);
         self.cursor = 0;
     }
 
-    fn end(&mut self, out: &mut impl Sink) {
+    fn end(&mut self, out: &mut (impl Sink + ?Sized)) {
         csi_right(out, self.length_bytes - self.cursor);
         self.cursor = self.length_bytes;
     }
 
     /// Up arrow: show the previous (older) history entry. The first press stashes the line in
     /// progress so browsing is non-destructive.
-    fn history_previous(&mut self, out: &mut impl Sink) {
+    fn history_previous(&mut self, out: &mut (impl Sink + ?Sized)) {
         let k = match self.browse {
             None => {
                 if self.history_count == 0 {
@@ -648,7 +653,7 @@ impl LineEditor {
     }
 
     /// Down arrow: toward newer entries; past the newest, restore the stashed line.
-    fn history_next_entry(&mut self, out: &mut impl Sink) {
+    fn history_next_entry(&mut self, out: &mut (impl Sink + ?Sized)) {
         match self.browse {
             None => out.put(&[BEL]),
             Some(1) => {
@@ -669,7 +674,7 @@ impl LineEditor {
     }
 
     /// Replace the whole edit line with `text` and repaint the input region, cursor at the end.
-    fn replace_line(&mut self, text: &[u8], out: &mut impl Sink) {
+    fn replace_line(&mut self, text: &[u8], out: &mut (impl Sink + ?Sized)) {
         csi_left(out, self.cursor);
         let n = text.len().min(MAXIMUM_LINE_BYTES);
         self.buffer[..n].copy_from_slice(&text[..n]);
@@ -684,16 +689,16 @@ impl LineEditor {
 
 /// Emit `CSI <n> D` (cursor left `n`), eliding the count when it is 1 and the whole sequence
 /// when it is 0.
-fn csi_left(out: &mut impl Sink, n: usize) {
+fn csi_left(out: &mut (impl Sink + ?Sized), n: usize) {
     csi_move(out, n, b'D');
 }
 
 /// Emit `CSI <n> C` (cursor right `n`), same elisions.
-fn csi_right(out: &mut impl Sink, n: usize) {
+fn csi_right(out: &mut (impl Sink + ?Sized), n: usize) {
     csi_move(out, n, b'C');
 }
 
-fn csi_move(out: &mut impl Sink, n: usize, direction: u8) {
+fn csi_move(out: &mut (impl Sink + ?Sized), n: usize, direction: u8) {
     // The distance is a position inside a line, so it fits sixteen bits, and five decimal digits
     // hold any sixteen-bit number. The sequence buffer is sized from those two facts.
     const { assert!(MAXIMUM_LINE_BYTES <= u16::MAX as usize) };
