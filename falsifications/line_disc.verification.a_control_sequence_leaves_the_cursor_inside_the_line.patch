@@ -1,12 +1,14 @@
 Falsifies `line_editor::line_disc::verification::a_control_sequence_leaves_the_cursor_inside_the_line`.
 
-The defect: the cursor-right move tests `cursor <= length` where it must test `cursor < length`, so
-a right arrow at the end of the line steps the cursor one past the last byte. Every unit test that
-presses Right does so mid-line, and none presses it at the end, which is the only place the
-defect shows.
+The defect: the cursor-right move tests `cursor <= length` where it must test `cursor < length`,
+and the search for the next character boundary falls back to one byte on where it must stop at
+the end of the line. Together they let a right arrow at the end of the line step the cursor one
+past the last byte. Either half alone is harmless, since the bounded search stops at the end of
+the line, so the defect needs both; the unit test of a move off either end of the line also
+catches it, by the move it echoes.
 
-Expected to fail: the harness's `assert!(editor.cursor <= editor.length_bytes)`, on a line whose cursor sits
-at its end when the sequence `CSI C` arrives.
+Expected to fail: the harness's `assert!(editor.cursor <= editor.length_bytes)`, on a line whose
+cursor sits at its end when the sequence `CSI C` arrives.
 
 diff --git a/src/line_disc.rs b/src/line_disc.rs
 --- a/src/line_disc.rs
@@ -20,3 +22,12 @@ diff --git a/src/line_disc.rs b/src/line_disc.rs
              self.cursor = self.next_boundary(self.cursor);
              out.put(b"\x1b[C");
          }
+@@ -732,7 +732,7 @@
+     fn next_boundary(&self, at: usize) -> usize {
+         (at + 1..self.length_bytes)
+             .find(|&i| !is_continuation(self.buffer[i]))
+-            .unwrap_or(self.length_bytes)
++            .unwrap_or(at + 1)
+     }
+ 
+     /// Up arrow: show the previous (older) history entry. The first press stashes the line in
