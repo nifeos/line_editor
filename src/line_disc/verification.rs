@@ -34,7 +34,7 @@ fn any_editor() -> LineEditor {
 /// `cursor <= length`, and the length does not grow: a digit, a separator, a final byte that moves, deletes or
 /// is unknown, and a malformed byte all keep it.
 #[kani::proof]
-#[kani::unwind(5)]
+#[kani::unwind(18)]
 #[kani::solver(minisat)]
 fn a_control_sequence_leaves_the_cursor_inside_the_line() {
     let mut editor = any_editor();
@@ -54,7 +54,7 @@ fn a_control_sequence_leaves_the_cursor_inside_the_line() {
 /// and puts the cursor where the doc comment says: shifted back by the removed count when it was
 /// at or past `b`, at `a` when it was inside the range or at `a`.
 #[kani::proof]
-#[kani::unwind(5)]
+#[kani::unwind(18)]
 #[kani::solver(minisat)]
 fn a_range_delete_removes_exactly_its_range() {
     let mut editor = any_editor();

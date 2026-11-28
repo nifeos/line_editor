@@ -19,14 +19,14 @@ carriage return (CR), a line feed (LF) or a carriage return line feed (CRLF), an
 
 | Input | Effect |
 |---|---|
-| printable ASCII (0x20 to 0x7e) | insert at the cursor |
-| `^B`, `^F`, Left, Right | move one byte |
+| a printable character, ASCII or UTF-8 | insert at the cursor, echoed once it is whole |
+| `^B`, `^F`, Left, Right | move one character |
 | `^A`, `^E`, Home, End | move to the start or the end |
 | `^K` | kill from the cursor to the end into the kill buffer |
 | `^U` | kill from the start to the cursor |
 | `^W` | kill the word before the cursor |
 | `^Y` | insert the kill buffer at the cursor |
-| Backspace, Delete | delete before, or under, the cursor |
+| Backspace, Delete | delete the character before, or under, the cursor |
 | Up, Down | step through history, the line in progress stashed |
 | `^L` | clear the screen and repaint the prompt and the line |
 | CR, LF, CRLF | end the line |
@@ -38,8 +38,8 @@ carriage return (CR), a line feed (LF) or a carriage return line feed (CRLF), an
 
 | Constant | Value | What it bounds |
 |---|---|---|
-| `MAXIMUM_LINE_BYTES` | 256 | bytes in a line; the next printable byte is refused with a bell |
-| `MAXIMUM_PROMPT_BYTES` | 64 | bytes of prompt repainted; the editor cuts a longer prompt short |
+| `MAXIMUM_LINE_BYTES` | 256 | bytes in a line; a character that does not fit is refused with a bell |
+| `MAXIMUM_PROMPT_BYTES` | 64 | bytes of prompt repainted; the editor cuts a longer prompt at a character boundary |
 | `HISTORY_LINES` | 8 | history lines held; a new line overwrites the oldest |
 | `MAXIMUM_RAW_QUEUE_BYTES` | 64 | bytes a `RawQueue` holds; the queue drops a burst past it |
 
@@ -61,7 +61,7 @@ editor.start_line(b"> ", &mut out);
 for byte in b"hello" {
     editor.feed(*byte, &mut out);
 }
-assert_eq!(editor.feed(b'\r', &mut out), Event::Line);
+assert_eq!(editor.feed(b'\r', &mut out), Some(Event::Line));
 assert_eq!(editor.line(), b"hello");
 ```
 
@@ -73,8 +73,10 @@ range. The rest is host tests.
 
 ## Handoff
 
-`LineEditor::save` and `restore` write and read the editor's state as a blob. The `handoff` module
-documents the layout and a test pins it. A change to the layout bumps `handoff::LAYOUT`.
+`LineEditor::save` and `LineEditor::restore` write and read the editor's state as a blob, through a
+`handoff::Writer` or `handoff::Reader` over the caller's buffer, and `RawQueue` has the same pair.
+The encoding is the crate's own and versioned: a test pins it byte for byte, and a build refuses a
+blob in any layout but its own.
 
 ## Build, test and prove
 
@@ -97,7 +99,8 @@ usual way to get one) and a git checkout. From the crate root:
 
 ## BUGS
 
-- Input is ASCII only. The editor drops a byte at or above 0x80 without echo.
+- Each character takes one column, so a wide character or a combining mark puts the cursor out of
+  step with the screen.
 - The redraw math assumes one row, so a line that wraps past the margin redraws wrongly.
 - History is eight lines, fixed, and the editor skips only a repeat of the newest line. The kill
   buffer holds one entry.

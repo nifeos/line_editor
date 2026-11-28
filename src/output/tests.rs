@@ -58,3 +58,24 @@ fn output_expansion_puts_each_segment_once_in_order() {
     assert_eq!(expand(b"a\n"), [b"a".to_vec(), b"\r\n".to_vec()]);
     assert!(expand(b"").is_empty());
 }
+
+/// **A `dyn Sink` reaches every method that takes a sink**, so a caller that picks its sink at run
+/// time passes a trait object rather than writing a wrapper.
+#[test]
+fn a_trait_object_is_a_sink() {
+    struct Buf(Vec<u8>);
+    impl Sink for Buf {
+        fn put(&mut self, b: &[u8]) {
+            self.0.extend_from_slice(b);
+        }
+    }
+    let mut buffer = Buf(Vec::new());
+    let out: &mut dyn Sink = &mut buffer;
+    let mut editor = crate::LineEditor::new();
+    editor.start_line(b"> ", out);
+    editor.feed(b'a', out);
+    editor.insert_text(b"b", out);
+    editor.repaint(out);
+    expand_output(b"c\n", out);
+    assert_eq!(buffer.0, b"> ab> abc\r\n");
+}

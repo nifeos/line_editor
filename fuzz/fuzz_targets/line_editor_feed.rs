@@ -25,6 +25,8 @@
 //! 2. **A completed line is at most `MAXIMUM_LINE_BYTES` bytes.**
 //! 3. **A sink put is never an empty write**, and no put carries more than a line, a prompt and
 //!    the longest cursor-move sequence, so echo cannot grow without bound from one byte.
+//! 4. **The pending line is always well-formed UTF-8 and the cursor sits on a character
+//!    boundary**, whatever bytes arrived, since only whole characters enter the line.
 
 #![no_main]
 
@@ -53,6 +55,11 @@ fn check(editor: &LineEditor) {
         line.len() <= MAXIMUM_LINE_BYTES,
         "the line outgrew its limit"
     );
+    let text = core::str::from_utf8(line).expect("the line is not UTF-8");
+    assert!(
+        text.is_char_boundary(cursor),
+        "the cursor split a character"
+    );
 }
 
 fuzz_target!(|data: &[u8]| {
@@ -76,7 +83,7 @@ fuzz_target!(|data: &[u8]| {
                 0xf3 => editor.abandon(),
                 _ => editor.insert_text(argument, &mut out),
             }
-        } else if editor.feed(byte, &mut out) == Event::Line {
+        } else if editor.feed(byte, &mut out) == Some(Event::Line) {
             assert!(
                 editor.line().len() <= MAXIMUM_LINE_BYTES,
                 "a line past its limit"

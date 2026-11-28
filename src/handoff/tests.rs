@@ -1,6 +1,7 @@
 use super::*;
-use crate::test_support::{Screen, feed_all};
+use crate::test_support::{Screen, drain, feed_all};
 use crate::{MAXIMUM_LINE_BYTES, MAXIMUM_PROMPT_BYTES, MAXIMUM_RAW_QUEUE_BYTES, RawQueue, handoff};
+use std::string::ToString;
 extern crate std;
 use std::vec::Vec;
 
@@ -32,9 +33,9 @@ fn a_handed_off_discipline_carries_on_where_the_old_one_stopped() {
     // in one page. The estimate had counted buffers the blob does not carry.
     assert!(n < 2048, "the discipline's blob grew to {n} bytes");
 
-    let mut new = LineEditor::new();
     let mut r = handoff::Reader::new(&page[..n]).unwrap();
-    new.restore(&mut r).unwrap();
+    let mut new = LineEditor::restore(&mut r).unwrap();
+    assert_eq!(r.finish(), n, "the restore read the whole blob");
     new.resume_line(b"$ ");
     let mut s2 = Screen::new();
     feed_all(&mut new, &mut s2, b"ho\r");
@@ -52,8 +53,8 @@ fn a_handed_off_discipline_carries_on_where_the_old_one_stopped() {
     );
 }
 
-/// **A blob this build cannot read is refused whole, with the reason**, which is what lets a
-/// supervisor not commit a swap to it.
+/// **A blob this build cannot read is refused whole, with the reason**, which is what lets the
+/// caller keep the old program running instead.
 #[test]
 fn a_blob_in_another_layout_or_none_at_all_is_refused() {
     assert_eq!(
@@ -67,12 +68,87 @@ fn a_blob_in_another_layout_or_none_at_all_is_refused() {
         handoff::Reader::new(&page).err(),
         Some(handoff::Refusal::Layout(2))
     );
+    assert_eq!(
+        handoff::Reader::new(&page[..6]).err(),
+        Some(handoff::Refusal::Truncated)
+    );
+    assert_eq!(
+        handoff::Reader::new(&page[..2]).err(),
+        Some(handoff::Refusal::NoBlob)
+    );
     let mut w = handoff::Writer::new(&mut page);
     w.field(&[1; 64]);
     assert_eq!(
         w.finish(),
-        None,
+        Err(handoff::Refusal::BufferTooSmall),
         "a blob that does not fit must say so, not truncate"
+    );
+}
+
+/// **A refusal says why in words** and is an error a caller can pass up with `?`.
+#[test]
+fn a_refusal_is_an_error_that_says_why() {
+    fn takes_an_error(_: &dyn core::error::Error) {}
+    takes_an_error(&handoff::Refusal::Truncated);
+    assert_eq!(
+        handoff::Refusal::Layout(2).to_string(),
+        "the handoff blob is in layout 2, and this build reads only layout 1"
+    );
+    for refusal in [
+        handoff::Refusal::NoBlob,
+        handoff::Refusal::Truncated,
+        handoff::Refusal::FieldTooLong,
+        handoff::Refusal::Malformed,
+        handoff::Refusal::BufferTooSmall,
+    ] {
+        assert!(!refusal.to_string().is_empty(), "{refusal:?}");
+    }
+}
+
+/// **Each way a blob can be wrong has its own refusal**: one cut short, one whose field outgrows
+/// its buffer, and one whose cursor lies past its line.
+#[test]
+fn a_bad_blob_is_refused_with_its_own_reason() {
+    let (mut d, mut s) = (LineEditor::new(), Screen::new());
+    d.start_line(b"$", &mut s);
+    feed_all(&mut d, &mut s, b"ab");
+    let mut page = [0u8; 256];
+    let mut w = handoff::Writer::new(&mut page);
+    d.save(&mut w);
+    let n = w.finish().unwrap();
+
+    let mut r = handoff::Reader::new(&page[..n - 1]).unwrap();
+    assert_eq!(
+        LineEditor::restore(&mut r).err(),
+        Some(handoff::Refusal::Truncated)
+    );
+
+    // The line's length word, at 8, claims a line longer than the editor holds.
+    let mut long = page;
+    long[8..12].copy_from_slice(&(MAXIMUM_LINE_BYTES as u32 + 1).to_le_bytes());
+    let mut r = handoff::Reader::new(&long[..n]).unwrap();
+    assert_eq!(
+        LineEditor::restore(&mut r).err(),
+        Some(handoff::Refusal::FieldTooLong)
+    );
+
+    // The cursor word, at 8 + 4 + 2, past the two-byte line.
+    let mut past = page;
+    past[14..18].copy_from_slice(&3u32.to_le_bytes());
+    let mut r = handoff::Reader::new(&past[..n]).unwrap();
+    assert_eq!(
+        LineEditor::restore(&mut r).err(),
+        Some(handoff::Refusal::Malformed)
+    );
+
+    // A raw queue's field longer than the queue holds.
+    let mut w = handoff::Writer::new(&mut page);
+    w.field(&[0; MAXIMUM_RAW_QUEUE_BYTES + 1]);
+    let n = w.finish().unwrap();
+    let mut r = handoff::Reader::new(&page[..n]).unwrap();
+    assert_eq!(
+        RawQueue::restore(&mut r).err(),
+        Some(handoff::Refusal::FieldTooLong)
     );
 }
 
@@ -83,13 +159,16 @@ fn a_blob_in_another_layout_or_none_at_all_is_refused() {
 #[test]
 fn a_blob_may_fill_its_buffer_exactly_and_no_more() {
     let mut exact = [0u8; 8];
-    assert_eq!(handoff::Writer::new(&mut exact).finish(), Some(8));
+    assert_eq!(handoff::Writer::new(&mut exact).finish(), Ok(8));
     let mut short = [0u8; 7];
-    assert_eq!(handoff::Writer::new(&mut short).finish(), None);
+    assert_eq!(
+        handoff::Writer::new(&mut short).finish(),
+        Err(handoff::Refusal::BufferTooSmall)
+    );
     let mut page = [0u8; 12];
     let mut w = handoff::Writer::new(&mut page);
     w.field(&[]);
-    assert_eq!(w.finish(), Some(12), "the length word fills the last four");
+    assert_eq!(w.finish(), Ok(12), "the length word fills the last four");
 }
 
 /// A field is refused when longer than the buffer it lands in and accepted when exactly as long.
@@ -102,10 +181,10 @@ fn a_field_exactly_as_long_as_its_buffer_fits_and_one_longer_is_malformed() {
     let n = w.finish().unwrap();
     let mut r = handoff::Reader::new(&page[..n]).unwrap();
     let mut five = [0u8; 5];
-    assert_eq!(r.field(&mut five), Some(5));
+    assert_eq!(r.field(&mut five), Ok(5));
     assert_eq!(five, [7; 5]);
     let mut four = [0u8; 4];
-    assert_eq!(r.field(&mut four), None);
+    assert_eq!(r.field(&mut four), Err(handoff::Refusal::FieldTooLong));
 }
 
 /// **The cursor a blob carries cannot lie past the line**: a cursor on the last byte or past
@@ -125,9 +204,8 @@ fn a_restored_cursor_stays_inside_its_line_and_history_keeps_its_place() {
     old.save(&mut w);
     let n = w.finish().unwrap();
 
-    let mut new = LineEditor::new();
     let mut r = handoff::Reader::new(&page[..n]).unwrap();
-    assert_eq!(new.restore(&mut r), Some(()));
+    let mut new = LineEditor::restore(&mut r).unwrap();
     assert_eq!(new.pending(), (b"abc".as_slice(), 2));
     feed_all(&mut new, &mut s, b"\x15\x1b[A"); // ^U, then Up
     assert_eq!(new.pending().0, b"three");
@@ -137,11 +215,36 @@ fn a_restored_cursor_stays_inside_its_line_and_history_keeps_its_place() {
     let mut bad = page;
     bad[15..19].copy_from_slice(&4u32.to_le_bytes());
     let mut r = handoff::Reader::new(&bad[..n]).unwrap();
-    assert_eq!(LineEditor::new().restore(&mut r), None);
+    assert_eq!(
+        LineEditor::restore(&mut r).err(),
+        Some(handoff::Refusal::Malformed)
+    );
     // And a cursor on the line's own end is not past it.
     bad[15..19].copy_from_slice(&3u32.to_le_bytes());
     let mut r = handoff::Reader::new(&bad[..n]).unwrap();
-    assert_eq!(LineEditor::new().restore(&mut r), Some(()));
+    assert!(LineEditor::restore(&mut r).is_ok());
+}
+
+/// A cursor saved between two bytes of one character is refused, since the editor never puts it
+/// there and every move would then land off the character boundaries.
+#[test]
+fn a_cursor_inside_a_character_is_malformed() {
+    let (mut old, mut s) = (LineEditor::new(), Screen::new());
+    feed_all(&mut old, &mut s, "aé".as_bytes());
+    let mut page = [0u8; 4096];
+    let mut w = handoff::Writer::new(&mut page);
+    old.save(&mut w);
+    let n = w.finish().unwrap();
+    // The header is 8 bytes, the line field 4 + 3, so the cursor word sits at 15; 2 is inside é.
+    page[15..19].copy_from_slice(&2u32.to_le_bytes());
+    let mut r = handoff::Reader::new(&page[..n]).unwrap();
+    assert_eq!(
+        LineEditor::restore(&mut r).err(),
+        Some(handoff::Refusal::Malformed)
+    );
+    page[15..19].copy_from_slice(&1u32.to_le_bytes());
+    let mut r = handoff::Reader::new(&page[..n]).unwrap();
+    assert_eq!(LineEditor::restore(&mut r).unwrap().pending().1, 1);
 }
 
 /// **Unread raw bytes cross a swap in order**, including when the ring has wrapped, and an
@@ -151,13 +254,8 @@ fn the_raw_queue_crosses_a_swap_in_order_across_the_wrap() {
     let mut q = RawQueue::new();
     let first: Vec<u8> = (0..60).collect();
     q.push(&first);
-    // Bounded, so a `pop_up_to_eight` that never shortens the queue fails the assertion instead of hanging.
-    for _ in 0..MAXIMUM_RAW_QUEUE_BYTES {
-        if q.length_bytes <= 4 {
-            break;
-        }
-        q.pop_up_to_eight();
-    }
+    let mut skipped = [0u8; 56];
+    assert_eq!(q.read(&mut skipped), 56);
     assert_eq!(q.length_bytes, 4);
     let more: Vec<u8> = (100..110).collect();
     q.push(&more); // the ring wraps: head is near the end
@@ -167,33 +265,19 @@ fn the_raw_queue_crosses_a_swap_in_order_across_the_wrap() {
     let mut w = handoff::Writer::new(&mut page);
     q.save(&mut w);
     let n = w.finish().unwrap();
-    let mut copy = RawQueue::new();
     let mut r = handoff::Reader::new(&page[..n]).unwrap();
-    assert_eq!(copy.restore(&mut r), Some(()));
+    let mut copy = RawQueue::restore(&mut r).unwrap();
 
-    let drain = |q: &mut RawQueue| {
-        let mut out = Vec::new();
-        for _ in 0..=MAXIMUM_RAW_QUEUE_BYTES {
-            let Some((n, packed)) = q.pop_up_to_eight() else {
-                break;
-            };
-            out.extend_from_slice(&packed.to_le_bytes()[..n]);
-        }
-        out
-    };
     let mut expect: Vec<u8> = (56..60).collect();
     expect.extend(100..110);
-    assert_eq!(drain(&mut q), expect);
-    assert_eq!(drain(&mut copy), expect);
+    assert_eq!(drain(&mut q, 8), expect);
+    assert_eq!(drain(&mut copy, 8), expect);
 
     let mut w = handoff::Writer::new(&mut page);
     RawQueue::new().save(&mut w);
     let n = w.finish().unwrap();
-    let mut empty = RawQueue::new();
-    empty.push(b"x");
     let mut r = handoff::Reader::new(&page[..n]).unwrap();
-    assert_eq!(empty.restore(&mut r), Some(()));
-    assert!(empty.is_empty());
+    assert!(RawQueue::restore(&mut r).unwrap().is_empty());
 }
 
 /// **The blob's bytes are pinned**: a small editor state written by hand, field by field, so a
@@ -228,8 +312,8 @@ fn the_blob_layout_is_pinned_byte_for_byte() {
 
 /// **The blob has an upper bound**: with every buffer full the editor's part is the header, the
 /// line, the cursor, the kill buffer, the prompt, two history words and eight full history
-/// slots, 2688 bytes, and the raw queue's part is a length word and up to 64 bytes. Both fit the
-/// one page the terminal's handoff frame has.
+/// slots, 2688 bytes, and the raw queue's part is a length word and up to 64 bytes. Both fit one
+/// 4 KiB page.
 #[test]
 fn a_full_blob_is_the_documented_size() {
     let mut d = LineEditor::new();
@@ -242,13 +326,13 @@ fn a_full_blob_is_the_documented_size() {
     let mut page = [0u8; 4096];
     let mut w = handoff::Writer::new(&mut page);
     d.save(&mut w);
-    assert_eq!(w.finish(), Some(2688));
+    assert_eq!(w.finish(), Ok(2688));
 
     let mut q = RawQueue::new();
     q.push(&[7; MAXIMUM_RAW_QUEUE_BYTES]);
     let mut w = handoff::Writer::new(&mut page);
     q.save(&mut w);
-    assert_eq!(w.finish(), Some(8 + 4 + MAXIMUM_RAW_QUEUE_BYTES));
+    assert_eq!(w.finish(), Ok(8 + 4 + MAXIMUM_RAW_QUEUE_BYTES));
 }
 
 /// A raw queue whose bytes wrap past the end of its ring is saved oldest first and restored whole.
@@ -256,40 +340,34 @@ fn a_full_blob_is_the_documented_size() {
 fn a_wrapped_raw_queue_round_trips() {
     let mut q = RawQueue::new();
     q.push(&[1; 60]);
-    q.pop_up_to_eight();
-    q.pop_up_to_eight();
-    q.pop_up_to_eight();
-    q.pop_up_to_eight();
-    q.pop_up_to_eight();
-    q.pop_up_to_eight();
-    q.pop_up_to_eight(); // 56 popped: head is at 56
+    assert_eq!(q.read(&mut [0; 56]), 56); // head is at 56
     q.push(&[9, 9, 9, 9, 9, 9, 9, 9, 8, 8]); // wraps the ring
     let mut page = [0u8; 128];
     let mut w = handoff::Writer::new(&mut page);
     q.save(&mut w);
     let n = w.finish().unwrap();
-    let mut got = RawQueue::new();
-    got.restore(&mut handoff::Reader::new(&page[..n]).unwrap())
-        .unwrap();
-    let a = drain(&mut q);
-    let b = drain(&mut got);
+    let mut got = RawQueue::restore(&mut handoff::Reader::new(&page[..n]).unwrap()).unwrap();
+    let a = drain(&mut q, 8);
+    let b = drain(&mut got, 8);
     assert_eq!(a, b);
     assert_eq!(a.len(), 4 + 10);
 }
 
-/// Every byte a raw queue holds, oldest first. Bounded at one pop per byte the ring can hold, so a
-/// `pop_up_to_eight` that never empties the queue fails the assertion instead of hanging.
-fn drain(q: &mut RawQueue) -> Vec<u8> {
-    let mut bytes = Vec::new();
-    for _ in 0..=MAXIMUM_RAW_QUEUE_BYTES {
-        let Some((n, packed)) = q.pop_up_to_eight() else {
-            return bytes;
-        };
-        assert!(
-            (1..=8).contains(&n),
-            "a pop returns one to eight bytes, got {n}"
-        );
-        bytes.extend_from_slice(&packed.to_le_bytes()[..n]);
-    }
-    panic!("the queue never emptied");
+/// **The framing types' `Debug` shows positions and sizes**, never the bytes they carry.
+#[test]
+fn the_framing_types_debug_shows_positions_and_not_the_bytes() {
+    use std::format;
+    let mut page = [0u8; 64];
+    let mut w = handoff::Writer::new(&mut page);
+    w.field(b"secret");
+    assert_eq!(
+        format!("{w:?}"),
+        "Writer { written_bytes: 18, buffer_bytes: 64, full: false }"
+    );
+    let n = w.finish().unwrap();
+    let r = handoff::Reader::new(&page[..n]).unwrap();
+    assert_eq!(
+        format!("{r:?}"),
+        "Reader { read_bytes: 8, buffer_bytes: 18 }"
+    );
 }

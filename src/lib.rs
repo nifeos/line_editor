@@ -1,9 +1,8 @@
 //! The line discipline engine: an editor for a serial terminal that does no input or output of its
 //! own.
 //!
-//! [`LineEditor`] takes one byte at a time and emits echo bytes and completed lines; it does no
-//! input or output (IO), inter-process communication (IPC), universal asynchronous
-//! receiver-transmitter (UART) or endpoint work, so the program that runs it only wires it
+//! [`LineEditor`] takes one byte at a time and emits echo bytes and completed lines; it reads no
+//! device and writes none, and it sends no message, so the program that runs it only wires it
 //! up. It edits at a cursor, moves by control characters and ANSI (American National Standards
 //! Institute) sequences, kills and yanks, keeps [`HISTORY_LINES`] lines of history, ends a line on
 //! a carriage return (CR), a line feed (LF) or both (CRLF), and reports ^C, ^D, ^Z and Tab as an
@@ -14,14 +13,14 @@
 //!
 //! | Input | Effect |
 //! |---|---|
-//! | printable ASCII (0x20 to 0x7e) | insert at the cursor |
-//! | `^B`, `^F`, Left, Right | move one byte |
+//! | a printable character, ASCII or UTF-8 | insert at the cursor, echoed once it is whole |
+//! | `^B`, `^F`, Left, Right | move one character |
 //! | `^A`, `^E`, Home, End | move to the start or the end |
 //! | `^K` | kill from the cursor to the end into the kill buffer |
 //! | `^U` | kill from the start to the cursor |
 //! | `^W` | kill the word before the cursor (blanks, then non-blanks) |
 //! | `^Y` | insert the kill buffer at the cursor |
-//! | Backspace (0x08, 0x7f), Delete | delete before, or under, the cursor |
+//! | Backspace (0x08, 0x7f), Delete | delete the character before, or under, the cursor |
 //! | Up, Down | step through history, the line in progress stashed |
 //! | `^L` | clear the screen and repaint the prompt and the line |
 //! | CR, LF, CRLF | end the line ([`Event::Line`]) |
@@ -33,19 +32,24 @@
 //! The arrow, Home, End and Delete keys arrive as `ESC [ ...` or `ESC O ...` sequences. An
 //! unrecognized final byte drops the whole sequence, and an X10 mouse report (`ESC [ M` and three
 //! payload bytes) is dropped with its payload. A second Escape is the same introducer.
+//!
+//! A byte at or above 0x80 is part of a UTF-8 character. The editor holds it until the character
+//! is whole, then inserts and echoes the character; it drops, without echo, a malformed sequence
+//! and a C1 control character (U+0080 to U+009F). Each character takes one column.
 
 //! # Limits
 //!
 //! | Constant | Value | What it bounds |
 //! |---|---|---|
-//! | [`MAXIMUM_LINE_BYTES`] | 256 | bytes in a line; the next printable byte is refused with a bell |
-//! | [`MAXIMUM_PROMPT_BYTES`] | 64 | bytes of prompt repainted; a longer prompt is truncated |
+//! | [`MAXIMUM_LINE_BYTES`] | 256 | bytes in a line; a character that does not fit is refused with a bell |
+//! | [`MAXIMUM_PROMPT_BYTES`] | 64 | bytes of prompt repainted; a longer prompt is cut at a character boundary |
 //! | [`HISTORY_LINES`] | 8 | history lines held; the oldest is overwritten |
 //! | [`MAXIMUM_RAW_QUEUE_BYTES`] | 64 | bytes a [`RawQueue`] holds; a burst past it is dropped |
 //!
 //! # Example
 //!
-//! The engine does no IO. Bytes go in one at a time, and echo comes out through a [`Sink`].
+//! The engine reads and writes no device itself. Bytes go in one at a time, and echo comes out
+//! through a [`Sink`].
 //!
 //! ```
 //! use line_editor::{Event, LineEditor, Sink};
@@ -63,14 +67,15 @@
 //! for byte in b"hello" {
 //!     editor.feed(*byte, &mut out);
 //! }
-//! assert_eq!(editor.feed(b'\r', &mut out), Event::Line);
+//! assert_eq!(editor.feed(b'\r', &mut out), Some(Event::Line));
 //! assert_eq!(editor.line(), b"hello");
 //! ```
 
 //! # BUGS
 //!
-//! - Input is ASCII only. A byte at or above 0x80 is dropped without echo, so UTF-8 text typed
-//!   into the line vanishes silently.
+//! - Each character takes one column, so a wide character (a Chinese, Japanese or Korean ideograph, many emoji) or a
+//!   combining mark puts the cursor out of step with the screen. Knowing a character's width
+//!   needs the Unicode tables, which the crate does not carry.
 //! - The redraw math assumes one row, so a line that wraps past the margin redraws wrongly;
 //!   [`MAXIMUM_LINE_BYTES`] keeps that rare. The editor tracks no terminal size, because asking for it
 //!   would block on a terminal that never answers.
@@ -99,22 +104,16 @@ pub use raw_queue::{MAXIMUM_RAW_QUEUE_BYTES, RawQueue};
 /// It carries what a replacement `line_editor` needs to carry on: the half-typed line and its
 /// cursor, the kill buffer, the history ring and the prompt. It leaves out state that lasts one
 /// keystroke: a half-received escape sequence, history browsing (the browsed line is the edit
-/// line, which is carried) and the last completed line (already delivered or queued). The layout
-/// is this crate's, versioned by [`handoff::LAYOUT`]; a supervisor never reads it.
+/// line, which is carried) and the last completed line (already delivered or queued). A
+/// [`RawQueue`] carries its unread bytes.
 ///
-/// # Layout
+/// [`handoff::Writer`] writes a blob into the caller's buffer and [`handoff::Reader`] reads one
+/// back; [`LineEditor::save`] and [`LineEditor::restore`], and the same pair on [`RawQueue`],
+/// fill and empty it. The encoding is this crate's own and versioned: a build refuses a blob
+/// written in another layout and reports which one it met ([`handoff::Refusal`]).
 ///
-/// Every word is a little-endian `u32`, and a field is a length word followed by that many bytes.
-/// The blob is, in order: [`handoff::MAGIC`], [`handoff::LAYOUT`], the line (a field), the cursor
-/// (a word), the kill buffer (a field), the prompt (a field), the number of history entries held
-/// and the next history slot (two words), then the eight history slots in slot order, each a field.
-/// A [`RawQueue`] saves as one field of its unread bytes, oldest first. Any change to this order,
-/// to a field's meaning or to a width bumps [`handoff::LAYOUT`]; a reader refuses every layout but
-/// its own and reports which one it met.
-///
-/// With every buffer full the editor's part is 2688 bytes and a raw queue's part is 68, so both
-/// fit one 4 KiB page. A refused blob ([`handoff::Refusal`]) may leave the editor half written,
-/// so the caller discards it.
+/// With every buffer full the editor's part is 2688 bytes, header included, and a raw queue's part
+/// is 68 more, so both fit one 4 KiB page.
 pub mod handoff;
 
 #[cfg(test)]
